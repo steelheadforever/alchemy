@@ -1,9 +1,9 @@
 import os from "node:os";
-import { execFileSync } from "node:child_process";
 import qrcode from "qrcode-terminal";
 
 import { parseArgs } from "./args.js";
 import { OpenClawCli } from "./openclaw-cli.js";
+import { resolveGatewayAddress } from "./network.js";
 import {
   detectNodePairingChanges,
   getDeviceId,
@@ -181,68 +181,6 @@ function printHeader({ name, gatewayUrl, networkChoice }) {
 
   console.log(`Local machine: ${os.hostname()}`);
   console.log("");
-}
-
-function resolveGatewayAddress(options, logger) {
-  if (options.url) {
-    logger?.info("Using explicit gateway URL", { url: options.url });
-    return { host: options.url, source: "explicit-url" };
-  }
-
-  const tailscaleAddress = resolveTailscaleIPv4();
-  if (tailscaleAddress) {
-    logger?.info("Selected Tailscale IPv4 address", { host: tailscaleAddress });
-    return { host: tailscaleAddress, source: "tailscale" };
-  }
-
-  const lanAddress = resolveLanIPv4();
-  if (lanAddress) {
-    logger?.info("Selected LAN IPv4 address", { host: lanAddress });
-    return { host: lanAddress, source: "lan" };
-  }
-
-  logger?.warn("No Tailscale or LAN IPv4 address found; using configured host", {
-    host: options.host,
-  });
-  return { host: options.host, source: "configured-host" };
-}
-
-function resolveTailscaleIPv4() {
-  try {
-    const output = execFileSync("tailscale", ["ip", "-4"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .trim()
-      .split(/\s+/)
-      .find(Boolean);
-
-    return output || null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveLanIPv4() {
-  const interfaces = os.networkInterfaces();
-
-  for (const addresses of Object.values(interfaces)) {
-    for (const address of addresses ?? []) {
-      if (address.family === "IPv4" && !address.internal && isPrivateIPv4(address.address)) {
-        return address.address;
-      }
-    }
-  }
-
-  return null;
-}
-
-function isPrivateIPv4(address) {
-  return (
-    address.startsWith("10.") ||
-    address.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
-  );
 }
 
 function delay(ms) {
