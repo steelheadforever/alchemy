@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-qr-pair",
+  "version": "0.1.0",
+  "description": "QR pairing helper for OpenClaw mobile onboarding.",
+  "type": "module",
+  "bin": {
+    "openclaw-qr-pair": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  }
+}
+
