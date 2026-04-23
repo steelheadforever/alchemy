@@ -24,7 +24,7 @@ protocol ScannerViewControllerDelegate: AnyObject {
     @MainActor func scannerViewController(_ controller: ScannerViewController, didScan code: String)
 }
 
-final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
     weak var delegate: (any ScannerViewControllerDelegate)?
 
     private let session = AVCaptureSession()
