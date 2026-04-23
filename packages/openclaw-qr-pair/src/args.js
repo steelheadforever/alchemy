@@ -10,6 +10,7 @@ export function parseArgs(argv) {
     pollIntervalSeconds: 2,
     name: os.hostname(),
     url: null,
+    remote: false,
     dryRun: false,
     verbose: process.env.OPENCLAW_QR_PAIR_DEBUG === "1",
   };
@@ -24,6 +25,11 @@ export function parseArgs(argv) {
 
     if (token === "--verbose") {
       options.verbose = true;
+      continue;
+    }
+
+    if (token === "--remote") {
+      options.remote = true;
       continue;
     }
 
@@ -60,6 +66,10 @@ export function parseArgs(argv) {
       default:
         break;
     }
+  }
+
+  if (options.remote && options.url) {
+    throw new Error("--remote and --url cannot be used together");
   }
 
   return options;

@@ -4,7 +4,8 @@ Host-side helper for OpenClaw mobile onboarding.
 
 ## What it does
 
-- Prefers a Tailscale IPv4 address when building a gateway URL.
+- Uses OpenClaw remote configuration when run with `--remote`.
+- Otherwise prefers a private LAN IPv4 address when building a local `ws://` gateway URL.
 - Uses `openclaw qr --json` to generate the actual setup code.
 - Renders the setup code as a terminal QR.
 - Watches `openclaw devices list --json` for either:
@@ -16,7 +17,18 @@ Host-side helper for OpenClaw mobile onboarding.
 
 - It wraps the public `openclaw` CLI instead of speaking the Gateway protocol directly.
 - It does not yet correlate pending requests to the bootstrap token itself; it uses a conservative "single new node request after helper start" rule.
-- Upstream docs currently warn that Tailscale/public `ws://` mobile pairing fails closed. Treat raw tailnet-IP pairing as an active validation item, not settled behavior.
+- Upstream OpenClaw fails closed for Tailscale/public `ws://` mobile pairing. Use `--remote` with Tailscale Serve/Funnel or pass an explicit `wss://` URL.
+
+## Remote pairing
+
+For iPhone pairing over Tailscale, use OpenClaw's secure remote path:
+
+```bash
+openclaw gateway --tailscale serve
+node src/cli.js --verbose --remote
+```
+
+`--remote` calls `openclaw qr --remote`, which prefers `gateway.remote.url` and can also use `gateway.tailscale.mode=serve|funnel`. This should produce a `wss://` setup URL instead of a raw `ws://100.x.x.x` URL.
 
 ## Debugging pairing failures
 
@@ -38,4 +50,11 @@ If no new pending request appears before timeout, the phone likely never reached
 
 ```bash
 node src/cli.js --verbose --url ws://<reachable-host>:18789
+```
+
+For Tailscale or public routes, use a secure URL:
+
+```bash
+node src/cli.js --verbose --remote
+node src/cli.js --verbose --url wss://<gateway-host>/ws
 ```

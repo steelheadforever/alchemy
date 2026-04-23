@@ -21,8 +21,11 @@ export class OpenClawCli {
     }
   }
 
-  async generateSetupCode({ url }) {
+  async generateSetupCode({ url, remote = false }) {
     const args = ["qr", "--json", "--no-ascii"];
+    if (remote) {
+      args.push("--remote");
+    }
     if (url) {
       args.push("--url", url);
     }

@@ -27,6 +27,7 @@ export async function main(argv) {
       pollIntervalSeconds: options.pollIntervalSeconds,
       name: options.name,
       url: options.url,
+      remote: options.remote,
       dryRun: options.dryRun,
       verbose: options.verbose,
     },
@@ -37,13 +38,17 @@ export async function main(argv) {
   const gatewayProbe = await openclaw.probeGateway();
   logger.info("Gateway probe succeeded", { gatewayProbe });
 
-  const networkChoice = resolveGatewayAddress(options, logger);
-  const gatewayUrl = options.url ?? `ws://${networkChoice.host}:${options.port}`;
-  const setup = await openclaw.generateSetupCode({ url: gatewayUrl });
+  const networkChoice = options.remote
+    ? { host: "openclaw remote configuration", source: "remote" }
+    : resolveGatewayAddress(options, logger);
+  const gatewayUrl = options.remote ? null : options.url ?? `ws://${networkChoice.host}:${options.port}`;
+  const setup = await openclaw.generateSetupCode({ url: gatewayUrl, remote: options.remote });
   const decodedSetup = decodeSetupCode(setup.setupCode);
   logger.info("Setup code generated", {
+    remote: options.remote,
     requestedGatewayUrl: gatewayUrl,
     returnedGatewayUrl: setup.gatewayUrl,
+    urlSource: setup.urlSource,
     decodedSetup,
   });
 
@@ -171,6 +176,8 @@ function printHeader({ name, gatewayUrl, networkChoice }) {
   if (networkChoice.source === "tailscale") {
     console.log(`Using Tailscale address: ${networkChoice.host}`);
     console.log("Warning: current upstream OpenClaw docs say mobile pairing may fail closed for Tailscale ws:// URLs.");
+  } else if (networkChoice.source === "remote") {
+    console.log("Using OpenClaw remote gateway configuration.");
   } else if (networkChoice.source === "tailscale-raw-fallback") {
     console.log(`Using Tailscale fallback address: ${networkChoice.host}`);
     console.log("Warning: OpenClaw requires wss:// or Tailscale Serve/Funnel for Tailscale mobile pairing.");

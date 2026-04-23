@@ -9,6 +9,19 @@ test("enables verbose diagnostics with flag", () => {
   assert.equal(options.verbose, true);
 });
 
+test("enables remote setup code generation with flag", () => {
+  const options = parseArgs(["--remote"]);
+
+  assert.equal(options.remote, true);
+});
+
+test("rejects remote and explicit url together", () => {
+  assert.throws(
+    () => parseArgs(["--remote", "--url", "wss://gateway.example/ws"]),
+    /--remote and --url cannot be used together/,
+  );
+});
+
 test("enables verbose diagnostics with environment variable", () => {
   const original = process.env.OPENCLAW_QR_PAIR_DEBUG;
   process.env.OPENCLAW_QR_PAIR_DEBUG = "1";
