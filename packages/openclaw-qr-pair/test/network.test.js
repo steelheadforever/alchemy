@@ -42,7 +42,7 @@ test("falls back to interface Tailscale IP when CLI lookup fails", () => {
   assert.equal(address, "100.101.102.103");
 });
 
-test("prefers Tailscale address over LAN address for gateway URL", () => {
+test("prefers LAN address over raw Tailscale address for gateway URL", () => {
   const interfaces = {
     en0: [{ family: "IPv4", internal: false, address: "192.168.1.20" }],
     utun4: [{ family: "IPv4", internal: false, address: "100.101.102.103" }],
@@ -59,5 +59,24 @@ test("prefers Tailscale address over LAN address for gateway URL", () => {
     },
   );
 
-  assert.deepEqual(choice, { host: "100.101.102.103", source: "tailscale" });
+  assert.deepEqual(choice, { host: "192.168.1.20", source: "lan-with-tailscale-detected" });
+});
+
+test("falls back to raw Tailscale address only when no LAN address exists", () => {
+  const interfaces = {
+    utun4: [{ family: "IPv4", internal: false, address: "100.101.102.103" }],
+  };
+
+  const choice = resolveGatewayAddress(
+    { host: "127.0.0.1", url: null },
+    null,
+    {
+      interfaces,
+      runTailscaleIp() {
+        throw new Error("tailscale command not found");
+      },
+    },
+  );
+
+  assert.deepEqual(choice, { host: "100.101.102.103", source: "tailscale-raw-fallback" });
 });

@@ -171,6 +171,12 @@ function printHeader({ name, gatewayUrl, networkChoice }) {
   if (networkChoice.source === "tailscale") {
     console.log(`Using Tailscale address: ${networkChoice.host}`);
     console.log("Warning: current upstream OpenClaw docs say mobile pairing may fail closed for Tailscale ws:// URLs.");
+  } else if (networkChoice.source === "tailscale-raw-fallback") {
+    console.log(`Using Tailscale fallback address: ${networkChoice.host}`);
+    console.log("Warning: OpenClaw requires wss:// or Tailscale Serve/Funnel for Tailscale mobile pairing.");
+  } else if (networkChoice.source === "lan-with-tailscale-detected") {
+    console.log(`Using LAN fallback address: ${networkChoice.host}`);
+    console.log("Tailscale was detected, but raw ws:// Tailscale pairing is not accepted by OpenClaw.");
   } else if (networkChoice.source === "lan") {
     console.log(`Using LAN fallback address: ${networkChoice.host}`);
   } else if (networkChoice.source === "explicit-url") {

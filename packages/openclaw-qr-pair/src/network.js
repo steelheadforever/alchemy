@@ -9,14 +9,23 @@ export function resolveGatewayAddress(options, logger, dependencies = {}) {
 
   const tailscaleAddress = resolveTailscaleIPv4({ logger, ...dependencies });
   if (tailscaleAddress) {
-    logger?.info("Selected Tailscale IPv4 address", { host: tailscaleAddress });
-    return { host: tailscaleAddress, source: "tailscale" };
+    logger?.warn("Detected Tailscale IPv4 address but will not auto-select raw ws:// Tailscale URL", {
+      host: tailscaleAddress,
+      reason: "OpenClaw requires wss:// or Tailscale Serve/Funnel for Tailscale mobile pairing.",
+    });
   }
 
   const lanAddress = resolveLanIPv4(dependencies.interfaces);
   if (lanAddress) {
     logger?.info("Selected LAN IPv4 address", { host: lanAddress });
-    return { host: lanAddress, source: "lan" };
+    return { host: lanAddress, source: tailscaleAddress ? "lan-with-tailscale-detected" : "lan" };
+  }
+
+  if (tailscaleAddress) {
+    logger?.warn("No LAN IPv4 address found; falling back to Tailscale address even though OpenClaw may reject raw ws://", {
+      host: tailscaleAddress,
+    });
+    return { host: tailscaleAddress, source: "tailscale-raw-fallback" };
   }
 
   logger?.warn("No Tailscale or LAN IPv4 address found; using configured host", {
