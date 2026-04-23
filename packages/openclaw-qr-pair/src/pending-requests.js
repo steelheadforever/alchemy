@@ -48,6 +48,29 @@ export function getPublicKey(entry) {
   return String(entry?.publicKey ?? entry?.public_key ?? "");
 }
 
+export function summarizeDeviceSnapshot(snapshot) {
+  const pending = extractPendingRequests(snapshot);
+  const paired = extractPairedDevices(snapshot);
+
+  return {
+    pendingCount: pending.length,
+    pairedCount: paired.length,
+    pendingNodeCount: pending.filter(isNodeRoleEntry).length,
+    pairedNodeCount: paired.filter(isNodeRoleEntry).length,
+    pendingNodeIds: pending.filter(isNodeRoleEntry).map(getRequestId).filter(Boolean),
+    pairedNodeIds: paired.filter(isNodeRoleEntry).map(getDeviceId).filter(Boolean),
+  };
+}
+
+export function summarizePairingCandidates(candidates) {
+  return {
+    pendingCount: candidates.pending.length,
+    pairedCount: candidates.paired.length,
+    pendingIds: candidates.pending.map(getRequestId).filter(Boolean),
+    pairedIds: candidates.paired.map(getDeviceId).filter(Boolean),
+  };
+}
+
 export function detectNodePairingChanges({ baseline, current, sinceMs }) {
   const baselineIds = new Set(extractPendingRequests(baseline).map(getRequestId).filter(Boolean));
   const baselinePairingKeys = new Set(

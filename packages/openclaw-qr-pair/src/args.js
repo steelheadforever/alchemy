@@ -11,6 +11,7 @@ export function parseArgs(argv) {
     name: os.hostname(),
     url: null,
     dryRun: false,
+    verbose: process.env.OPENCLAW_QR_PAIR_DEBUG === "1",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -18,6 +19,11 @@ export function parseArgs(argv) {
 
     if (token === "--dry-run") {
       options.dryRun = true;
+      continue;
+    }
+
+    if (token === "--verbose") {
+      options.verbose = true;
       continue;
     }
 
@@ -66,4 +72,3 @@ function parseIntegerFlag(flag, value) {
   }
   return parsed;
 }
-

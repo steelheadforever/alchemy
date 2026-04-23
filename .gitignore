@@ -3,7 +3,7 @@ node_modules/
 .build/
 Package.resolved
 DerivedData/
+.swift-cache/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 xcuserdata/
-

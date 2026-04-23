@@ -17,3 +17,25 @@ Host-side helper for OpenClaw mobile onboarding.
 - It wraps the public `openclaw` CLI instead of speaking the Gateway protocol directly.
 - It does not yet correlate pending requests to the bootstrap token itself; it uses a conservative "single new node request after helper start" rule.
 - Upstream docs currently warn that Tailscale/public `ws://` mobile pairing fails closed. Treat raw tailnet-IP pairing as an active validation item, not settled behavior.
+
+## Debugging pairing failures
+
+Run with verbose diagnostics when the iPhone reports that it could not connect to the server:
+
+```bash
+node src/cli.js --verbose
+```
+
+Verbose mode writes diagnostic logs to stderr while keeping the QR in the terminal. It reports:
+
+- which Gateway URL was encoded in the QR,
+- whether the helper selected a Tailscale, LAN, or explicit address,
+- the baseline and polled `openclaw devices list --json` counts,
+- whether a new pending or paired `node` device appeared,
+- whether `openclaw devices approve` was attempted and completed.
+
+If no new pending request appears before timeout, the phone likely never reached the Gateway URL. In that case, retry with an address the phone can reach:
+
+```bash
+node src/cli.js --verbose --url ws://<reachable-host>:18789
+```

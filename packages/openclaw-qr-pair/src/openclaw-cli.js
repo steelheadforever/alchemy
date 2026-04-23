@@ -4,6 +4,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export class OpenClawCli {
+  constructor({ logger } = {}) {
+    this.logger = logger;
+  }
+
   async checkInstalled() {
     await this.#run(["--version"]);
   }
@@ -48,9 +52,20 @@ export class OpenClawCli {
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
+        this.logger?.info("Running retryable openclaw command", {
+          command: ["openclaw", ...args],
+          attempt,
+          attempts,
+        });
         return await this.#run(args);
       } catch (error) {
         lastError = error;
+        this.logger?.warn("Retryable openclaw command failed", {
+          command: ["openclaw", ...args],
+          attempt,
+          attempts,
+          message: error.message,
+        });
         if (attempt < attempts) {
           await delay(attempt * 500);
         }
@@ -61,12 +76,30 @@ export class OpenClawCli {
   }
 
   async #run(args) {
-    const { stdout } = await execFileAsync("openclaw", args, {
-      env: process.env,
-      maxBuffer: 1024 * 1024,
-    });
+    this.logger?.info("Running openclaw command", { command: ["openclaw", ...args] });
 
-    return stdout.trim();
+    try {
+      const { stdout, stderr } = await execFileAsync("openclaw", args, {
+        env: process.env,
+        maxBuffer: 1024 * 1024,
+      });
+
+      this.logger?.info("Openclaw command completed", {
+        command: ["openclaw", ...args],
+        stdoutBytes: stdout.length,
+        stderr: stderr.trim() || undefined,
+      });
+
+      return stdout.trim();
+    } catch (error) {
+      this.logger?.error("Openclaw command failed", {
+        command: ["openclaw", ...args],
+        message: error.message,
+        stdout: error.stdout,
+        stderr: error.stderr,
+      });
+      throw error;
+    }
   }
 }
 
@@ -75,4 +108,3 @@ function delay(ms) {
     setTimeout(resolve, ms);
   });
 }
-
