@@ -1,5 +1,17 @@
 import Foundation
 
+public struct ConnectionDiagnostic: Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var timestamp: Date
+    public var message: String
+
+    public init(id: UUID = UUID(), timestamp: Date = Date(), message: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.message = message
+    }
+}
+
 public struct AgentSummary: Identifiable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -192,4 +204,3 @@ public struct SessionStreamEnvelope: Equatable, Sendable {
         self.item = item
     }
 }
-

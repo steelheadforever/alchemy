@@ -28,6 +28,7 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
     weak var delegate: (any ScannerViewControllerDelegate)?
 
     private let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "ai.alchemy.qr-scanner.session")
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private let statusLabel = UILabel()
     private var didDeliverCode = false
@@ -58,9 +59,7 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if session.isRunning {
-            session.stopRunning()
-        }
+        stopSession()
     }
 
     @MainActor
@@ -130,7 +129,21 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
         guard !session.isRunning else {
             return
         }
-        session.startRunning()
+        sessionQueue.async { [session] in
+            guard !session.isRunning else {
+                return
+            }
+            session.startRunning()
+        }
+    }
+
+    private func stopSession() {
+        sessionQueue.async { [session] in
+            guard session.isRunning else {
+                return
+            }
+            session.stopRunning()
+        }
     }
 
     private func showStatus(_ message: String) {
@@ -153,7 +166,7 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
         }
 
         didDeliverCode = true
-        session.stopRunning()
+        stopSession()
         AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
         Task { @MainActor in
             delegate?.scannerViewController(self, didScan: value)

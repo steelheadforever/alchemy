@@ -91,7 +91,7 @@ public struct GatewayConnectionConfiguration: Sendable, Equatable {
         GatewayConnectionConfiguration(
             url: setupCode.url,
             client: GatewayClientDescriptor(
-                id: "alchemy-ios",
+                id: "openclaw-ios",
                 displayName: displayName,
                 version: clientVersion,
                 platform: "ios",
@@ -114,12 +114,12 @@ public struct GatewayConnectionConfiguration: Sendable, Equatable {
         GatewayConnectionConfiguration(
             url: url,
             client: GatewayClientDescriptor(
-                id: "alchemy-ios",
+                id: "openclaw-ios",
                 displayName: displayName,
                 version: clientVersion,
                 platform: "ios",
                 deviceFamily: "phone",
-                mode: .operator
+                mode: .node
             ),
             role: .operator,
             scopes: [
@@ -327,4 +327,3 @@ public enum JSONValue: Sendable, Equatable, Codable {
         return text
     }
 }
-

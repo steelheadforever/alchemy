@@ -75,6 +75,7 @@ struct GatewayClientTests {
         let expectedPublicKey = try identity.publicKeyBase64URL
 
         #expect(connectFrame["method"]?.stringValue == "connect")
+        #expect(connectFrame["params"]?["client"]?["id"]?.stringValue == "openclaw-ios")
         #expect(connectFrame["params"]?["auth"]?["bootstrapToken"]?.stringValue == "bootstrap-secret")
         #expect(connectFrame["params"]?["auth"]?["token"] == nil)
         #expect(connectFrame["params"]?["device"]?["id"]?.stringValue == expectedDeviceID)

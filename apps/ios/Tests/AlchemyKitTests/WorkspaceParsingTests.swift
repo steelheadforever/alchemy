@@ -79,6 +79,71 @@ struct WorkspaceParsingTests {
     }
 
     @Test
+    func parsesAgentAssistantStreamEvent() throws {
+        let payload = try JSONValue.decode(
+            from: #"""
+            {
+              "sessionKey": "session-1",
+              "runId": "run-1",
+              "stream": "assistant",
+              "data": {
+                "text": "Yep — I’m here.",
+                "delta": "."
+              }
+            }
+            """#
+        )
+
+        let envelope = GatewayWorkspaceParsing.parseSessionEvent(
+            GatewayEvent(name: "agent", payload: payload, sequence: 12)
+        )
+
+        #expect(envelope?.sessionKey == "session-1")
+        if case .message(let message)? = envelope?.item.kind {
+            #expect(message.id == "agent:run-1")
+            #expect(message.text == "Yep — I’m here.")
+            #expect(message.isStreaming == true)
+            #expect(message.role == .assistant)
+        } else {
+            Issue.record("Expected agent assistant stream to become a message")
+        }
+    }
+
+    @Test
+    func parsesChatEventContentArray() throws {
+        let payload = try JSONValue.decode(
+            from: #"""
+            {
+              "sessionKey": "session-1",
+              "runId": "run-1",
+              "state": "complete",
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {"type": "text", "text": "Yep"},
+                  {"type": "text", "text": " done."}
+                ]
+              }
+            }
+            """#
+        )
+
+        let envelope = GatewayWorkspaceParsing.parseSessionEvent(
+            GatewayEvent(name: "chat", payload: payload, sequence: 20)
+        )
+
+        #expect(envelope?.sessionKey == "session-1")
+        if case .message(let message)? = envelope?.item.kind {
+            #expect(message.id == "chat:run-1")
+            #expect(message.text == "Yep done.")
+            #expect(message.isStreaming == false)
+            #expect(message.role == .assistant)
+        } else {
+            Issue.record("Expected chat event to become a message")
+        }
+    }
+
+    @Test
     func parsesExecApprovalIntoButtons() throws {
         let payload = try JSONValue.decode(
             from: #"""

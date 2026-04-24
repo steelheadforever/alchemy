@@ -142,6 +142,7 @@ public actor GatewayClient {
         }
 
         let requestID = UUID().uuidString.lowercased()
+        print("Alchemy Gateway request: method=\(method) id=\(requestID)")
         let frame = JSONValue.object([
             "type": .string("req"),
             "id": .string(requestID),
@@ -258,9 +259,12 @@ public actor GatewayClient {
         }
 
         if ok {
+            print("Alchemy Gateway response ok: id=\(requestID)")
             resumePendingResponse(id: requestID, result: .success(object["payload"] ?? .null))
         } else {
-            resumePendingResponse(id: requestID, result: .failure(parseResponseError(object["error"])))
+            let error = parseResponseError(object["error"])
+            print("Alchemy Gateway response error: id=\(requestID) code=\(error.code) message=\(error.message)")
+            resumePendingResponse(id: requestID, result: .failure(error))
         }
     }
 
@@ -357,6 +361,14 @@ public actor GatewayClient {
         if let userAgent = configuration.userAgent {
             params["userAgent"] = .string(userAgent)
         }
+
+        print(
+            """
+            Alchemy Gateway sending connect: role=\(configuration.role.rawValue) \
+            client.id=\(configuration.client.id) platform=\(configuration.client.platform) \
+            mode=\(configuration.client.mode.rawValue)
+            """
+        )
 
         let frame = JSONValue.object([
             "type": .string("req"),

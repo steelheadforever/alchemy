@@ -14,7 +14,8 @@ public struct AlchemyRootView: View {
                     onConnect: { setupCode in
                         await workspaceModel.connect(using: setupCode)
                     },
-                    connectionStatus: workspaceModel.errorMessage
+                    connectionStatus: workspaceModel.errorMessage,
+                    connectionDiagnostics: workspaceModel.connectionDiagnostics
                 )
             }
         }

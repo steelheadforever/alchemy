@@ -81,6 +81,10 @@ enum GatewayWorkspaceParsing {
         switch event.name {
         case "session.message":
             return parseSessionMessage(event.payload)
+        case "agent":
+            return parseAgentEvent(event.payload)
+        case "chat":
+            return parseChatEvent(event.payload)
         case "session.tool":
             return parseSessionTool(event.payload)
         case "exec.approval.requested":
@@ -135,6 +139,74 @@ enum GatewayWorkspaceParsing {
                     id: messageID,
                     role: role,
                     text: content,
+                    isStreaming: isStreaming
+                )
+            )
+        )
+
+        return SessionStreamEnvelope(sessionKey: sessionKey, item: item)
+    }
+
+    private static func parseAgentEvent(_ payload: JSONValue?) -> SessionStreamEnvelope? {
+        guard
+            payload?["stream"]?.stringValue == "assistant",
+            let sessionKey = parseSessionKeyFromPayload(payload)
+        else {
+            return nil
+        }
+
+        let text =
+            payload?["data"]?["text"]?.stringValue ??
+            payload?["data"]?["delta"]?.stringValue
+
+        guard let text else {
+            return nil
+        }
+
+        let runID = payload?["runId"]?.stringValue ?? sessionKey
+        let isStreaming = payload?["data"]?["done"]?.boolValue != true
+
+        let item = ChannelTimelineItem(
+            id: "message:agent:\(runID)",
+            kind: .message(
+                ChannelMessage(
+                    id: "agent:\(runID)",
+                    role: .assistant,
+                    text: text,
+                    isStreaming: isStreaming
+                )
+            )
+        )
+
+        return SessionStreamEnvelope(sessionKey: sessionKey, item: item)
+    }
+
+    private static func parseChatEvent(_ payload: JSONValue?) -> SessionStreamEnvelope? {
+        guard let sessionKey = parseSessionKeyFromPayload(payload) else {
+            return nil
+        }
+
+        let roleString = payload?["message"]?["role"]?.stringValue ?? "assistant"
+        let role = ChannelMessage.Role(rawValue: roleString) ?? .assistant
+        let text =
+            payload?["message"]?["text"]?.stringValue ??
+            payload?["message"]?["content"]?.stringValue ??
+            parseContentText(payload?["message"]?["content"])
+
+        guard let text else {
+            return nil
+        }
+
+        let runID = payload?["runId"]?.stringValue ?? UUID().uuidString.lowercased()
+        let isStreaming = payload?["state"]?.stringValue != "complete"
+
+        let item = ChannelTimelineItem(
+            id: "message:chat:\(runID)",
+            kind: .message(
+                ChannelMessage(
+                    id: "chat:\(runID)",
+                    role: role,
+                    text: text,
                     isStreaming: isStreaming
                 )
             )
@@ -403,6 +475,18 @@ enum GatewayWorkspaceParsing {
         payload?["key"]?.stringValue ??
         payload?["session"]?["key"]?.stringValue ??
         payload?["request"]?["sessionKey"]?.stringValue
+    }
+
+    private static func parseContentText(_ value: JSONValue?) -> String? {
+        if let text = value?.stringValue {
+            return text
+        }
+
+        return value?.arrayValue?
+            .compactMap { item in
+                item["text"]?.stringValue
+            }
+            .joined()
     }
 
     private static func parseLastMessage(_ value: JSONValue?, sessionKey: String) -> ChannelTimelineItem? {

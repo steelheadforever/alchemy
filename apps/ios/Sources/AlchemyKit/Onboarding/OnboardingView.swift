@@ -4,15 +4,18 @@ public struct OnboardingView: View {
     @State private var model = OnboardingViewModel()
     let onConnect: ((SetupCodePayload) async -> Void)?
     let connectionStatus: String?
+    let connectionDiagnostics: [ConnectionDiagnostic]
     @State private var isConnecting = false
     @State private var isPresentingScanner = false
 
     public init(
         onConnect: ((SetupCodePayload) async -> Void)? = nil,
-        connectionStatus: String? = nil
+        connectionStatus: String? = nil,
+        connectionDiagnostics: [ConnectionDiagnostic] = []
     ) {
         self.onConnect = onConnect
         self.connectionStatus = connectionStatus
+        self.connectionDiagnostics = connectionDiagnostics
     }
 
     public var body: some View {
@@ -67,6 +70,21 @@ public struct OnboardingView: View {
                     Section("Status") {
                         Text(errorMessage)
                             .foregroundStyle(.red)
+                    }
+                }
+
+                if !connectionDiagnostics.isEmpty {
+                    Section("Connection Diagnostics") {
+                        ForEach(connectionDiagnostics) { diagnostic in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(diagnostic.timestamp, format: .dateTime.hour().minute().second())
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(diagnostic.message)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
                 }
             }
