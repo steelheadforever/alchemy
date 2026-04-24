@@ -468,6 +468,7 @@ public final class ChatWorkspaceViewModel {
 
     private func sendMessage(_ text: String, in channel: WorkspaceChannel) async {
         appendLocalUserMessage(text, to: channel.id)
+        appendStreamingPlaceholder(to: channel.id)
 
         do {
             print("Alchemy Workspace: sending message session=\(channel.sessionKey) chars=\(text.count)")
@@ -477,6 +478,7 @@ public final class ChatWorkspaceViewModel {
                 idempotencyKey: UUID().uuidString.lowercased()
             )
         } catch {
+            removeStreamingPlaceholder(from: channel.id)
             errorMessage = "Could not send message: \(error.localizedDescription)"
             markChannel(channel.id, status: .error)
             print("Alchemy Workspace: send message failed: \(Self.describe(error: error))")
@@ -501,6 +503,34 @@ public final class ChatWorkspaceViewModel {
                 )
             )
         )
+    }
+
+    private func appendStreamingPlaceholder(to channelID: WorkspaceChannel.ID) {
+        guard let index = channels.firstIndex(where: { $0.id == channelID }) else {
+            return
+        }
+
+        channels[index].timeline.append(
+            ChannelTimelineItem(
+                id: "placeholder:\(channelID)",
+                kind: .message(
+                    ChannelMessage(
+                        id: "placeholder:\(channelID)",
+                        role: .assistant,
+                        text: "",
+                        isStreaming: true
+                    )
+                )
+            )
+        )
+    }
+
+    private func removeStreamingPlaceholder(from channelID: WorkspaceChannel.ID) {
+        guard let index = channels.firstIndex(where: { $0.id == channelID }) else {
+            return
+        }
+
+        channels[index].timeline.removeAll { $0.id == "placeholder:\(channelID)" }
     }
 
     private func markChannel(_ channelID: WorkspaceChannel.ID, status: WorkspaceChannel.Status) {
@@ -590,6 +620,22 @@ public final class ChatWorkspaceViewModel {
         }
 
         channel.timeline.append(item)
+
+        // Post-append cleanup: remove earlier blank or duplicate messages
+        // that slipped past the pre-checks (e.g. non-streaming events with
+        // different IDs arriving before text overlap could catch them).
+        if case .message(let msg) = item.kind, !msg.text.isEmpty {
+            let appendedIndex = channel.timeline.count - 1
+            let scanStart = max(0, appendedIndex - 10)
+            for i in stride(from: appendedIndex - 1, through: scanStart, by: -1) {
+                guard case .message(let earlier) = channel.timeline[i].kind else { continue }
+                guard earlier.role == msg.role else { continue }
+                if earlier.text.isEmpty || textsOverlap(earlier.text, msg.text) {
+                    channel.timeline.remove(at: i)
+                    break
+                }
+            }
+        }
     }
 
     private func mergeAtIndex(_ index: Int, with item: ChannelTimelineItem, into channel: inout WorkspaceChannel) {
@@ -635,7 +681,15 @@ public final class ChatWorkspaceViewModel {
             guard existing.role == incoming.role else {
                 return false
             }
-            return textsOverlap(existing.text, incoming.text)
+            if textsOverlap(existing.text, incoming.text) {
+                return true
+            }
+            // During streaming, an empty text on either side is a duplicate start/placeholder
+            // from a parallel event channel (session.message / agent / chat)
+            if existing.isStreaming || incoming.isStreaming {
+                return existing.text.isEmpty || incoming.text.isEmpty
+            }
+            return false
         }
     }
 
@@ -660,6 +714,11 @@ public final class ChatWorkspaceViewModel {
 
         if incoming.hasPrefix(existing) {
             return incoming
+        }
+
+        // Existing is longer and already contains incoming — keep existing
+        if existing.hasPrefix(incoming) {
+            return existing
         }
 
         return existing + incoming

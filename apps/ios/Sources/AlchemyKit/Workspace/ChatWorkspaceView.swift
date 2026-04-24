@@ -15,6 +15,8 @@ public struct ChatWorkspaceView: View {
         }
     }
 
+    // MARK: - Sidebar (unchanged — polish is a separate pass)
+
     private var sidebar: some View {
         List(selection: Binding(
             get: { model.selectedChannelID },
@@ -120,6 +122,8 @@ public struct ChatWorkspaceView: View {
         }
     }
 
+    // MARK: - Detail
+
     @ViewBuilder
     private var detail: some View {
         if let channel = model.selectedChannel {
@@ -150,7 +154,7 @@ public struct ChatWorkspaceView: View {
     private var connectionLabel: String {
         switch model.connectionState {
         case .connected: return "Connected"
-        case .connecting: return "Reconnecting…"
+        case .connecting: return "Reconnecting\u{2026}"
         case .disconnected: return "Disconnected"
         case .unknown: return "Unknown"
         }
@@ -158,17 +162,15 @@ public struct ChatWorkspaceView: View {
 
     private func color(for status: WorkspaceChannel.Status) -> Color {
         switch status {
-        case .idle:
-            return .secondary
-        case .connecting:
-            return .orange
-        case .live:
-            return .green
-        case .error:
-            return .red
+        case .idle: return .secondary
+        case .connecting: return .orange
+        case .live: return .green
+        case .error: return .red
         }
     }
 }
+
+// MARK: - Channel Chat
 
 private struct ChannelChatView: View {
     let channel: WorkspaceChannel
@@ -176,19 +178,27 @@ private struct ChannelChatView: View {
     let onSend: @MainActor () -> Void
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
+    private var pendingApproval: ChannelApprovalPrompt? {
+        channel.timeline.lazy.compactMap { item in
+            guard case .approval(let prompt) = item.kind,
+                  prompt.resolvedChoiceID == nil else { return nil }
+            return prompt
+        }.first
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(channel.timeline) { item in
                             TimelineItemView(item: item, onAction: onAction)
                                 .id(item.id)
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
-                .background(Color.secondary.opacity(0.06))
                 .onChange(of: channel.timeline.count) { _, _ in
                     if let last = channel.timeline.last {
                         withAnimation(.easeOut(duration: 0.2)) {
@@ -198,27 +208,26 @@ private struct ChannelChatView: View {
                 }
             }
 
-            Divider()
-
-            HStack(alignment: .bottom, spacing: 12) {
-                TextField("Message \(channel.title)", text: .init(
-                    get: { channel.draftMessage },
-                    set: { newValue in
-                        onDraftChanged(newValue)
-                    }
-                ), axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...6)
-
-                Button("Send", action: onSend)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(channel.status == .connecting)
+            if let approval = pendingApproval {
+                ApprovalFooterBar(prompt: approval, onAction: onAction)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .padding(16)
-            .background(.thinMaterial)
+
+            InputCapsule(
+                placeholder: "Message",
+                text: .init(
+                    get: { channel.draftMessage },
+                    set: { onDraftChanged($0) }
+                ),
+                isDisabled: channel.status == .connecting,
+                onSend: onSend
+            )
         }
+        .animation(.easeInOut(duration: 0.25), value: pendingApproval?.id)
     }
 }
+
+// MARK: - Timeline
 
 private struct TimelineItemView: View {
     let item: ChannelTimelineItem
@@ -231,228 +240,375 @@ private struct TimelineItemView: View {
         case .tool(let tool):
             ToolActivityView(tool: tool)
         case .approval(let approval):
-            ApprovalPromptView(prompt: approval, onAction: onAction)
+            ApprovalContextView(prompt: approval)
         case .options(let prompt):
             OptionPromptView(prompt: prompt, onAction: onAction)
         }
     }
 }
 
+// MARK: - Messages (asymmetric layout)
+
 private struct MessageBubbleView: View {
     let message: ChannelMessage
 
     var body: some View {
-        HStack {
-            if message.role == .user {
-                Spacer(minLength: 40)
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 60)
+                Text(message.text)
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        Color.blue.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    )
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
+        case .assistant:
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Color.secondary.opacity(0.08), in: Circle())
+
+                TypewriterText(text: message.text, isStreaming: message.isStreaming)
+                    .font(.callout)
+
+                Spacer(minLength: 20)
+            }
+
+        case .system:
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(message.text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TypewriterText(text: message.text, isStreaming: message.isStreaming)
-                if message.isStreaming {
-                    ProgressView()
-                        .controlSize(.small)
-                }
             }
-            .padding(12)
-            .frame(maxWidth: 580, alignment: .leading)
-            .background(backgroundColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            if message.role != .user {
-                Spacer(minLength: 40)
-            }
-        }
-    }
-
-    private var title: String {
-        switch message.role {
-        case .assistant:
-            return "Agent"
-        case .user:
-            return "You"
-        case .system:
-            return "System"
-        }
-    }
-
-    private var backgroundColor: Color {
-        switch message.role {
-        case .assistant:
-            return Color.secondary.opacity(0.12)
-        case .user:
-            return Color.blue.opacity(0.15)
-        case .system:
-            return Color.orange.opacity(0.15)
         }
     }
 }
+
+// MARK: - Typewriter + Blinking Cursor
 
 private struct TypewriterText: View {
     let text: String
     let isStreaming: Bool
 
     @State private var revealedCount = 0
+    @State private var cursorVisible = true
 
     var body: some View {
         let displayText: String = if !isStreaming {
             text
         } else if text.isEmpty {
-            "…"
+            ""
         } else {
             String(text.prefix(revealedCount))
         }
 
-        Text(displayText)
-            .textSelection(.enabled)
-            .task(id: isStreaming ? text.count : -1) {
-                guard isStreaming, revealedCount < text.count else { return }
-                while revealedCount < text.count {
-                    let pending = text.count - revealedCount
-                    let step = max(1, pending / 6)
-                    revealedCount = min(revealedCount + step, text.count)
-                    try? await Task.sleep(for: .milliseconds(16))
-                    guard !Task.isCancelled else { return }
-                }
+        HStack(alignment: .firstTextBaseline, spacing: 1) {
+            Text(displayText)
+                .textSelection(.enabled)
+
+            if isStreaming {
+                Text("\u{258E}")
+                    .foregroundStyle(.secondary)
+                    .opacity(cursorVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.4), value: cursorVisible)
+                    .task {
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: .milliseconds(530))
+                            cursorVisible.toggle()
+                        }
+                    }
             }
-            .onChange(of: isStreaming) { _, streaming in
-                if !streaming {
-                    revealedCount = text.count
-                }
+        }
+        .task(id: isStreaming ? text.count : -1) {
+            guard isStreaming, revealedCount < text.count else { return }
+            while revealedCount < text.count {
+                let pending = text.count - revealedCount
+                let step = max(1, pending / 6)
+                revealedCount = min(revealedCount + step, text.count)
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled else { return }
             }
+        }
+        .onChange(of: isStreaming) { _, streaming in
+            if !streaming {
+                revealedCount = text.count
+                cursorVisible = true
+            }
+        }
     }
 }
+
+// MARK: - Tool Activity (compact chip)
 
 private struct ToolActivityView: View {
     let tool: ChannelToolActivity
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(tool.title, systemImage: "wrench.and.screwdriver")
-                .font(.subheadline.weight(.semibold))
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tool.isStreaming ? Color.orange : Color.green)
+                .frame(width: 3)
 
-            if let detail = tool.detail {
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
 
-            HStack(spacing: 8) {
-                Text(tool.status)
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.12), in: Capsule())
+                    Text(tool.title)
+                        .font(.caption.weight(.medium))
 
-                if tool.isStreaming {
-                    ProgressView()
-                        .controlSize(.small)
+                    Spacer()
+
+                    Text(tool.status)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    if tool.isStreaming {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                if let detail = tool.detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
+            .padding(.leading, 8)
+            .padding(.vertical, 6)
+            .padding(.trailing, 10)
         }
-        .padding(12)
-        .frame(maxWidth: 580, alignment: .leading)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.leading, 34)
     }
 }
 
-private struct ApprovalPromptView: View {
+// MARK: - Approval Context (inline, no buttons)
+
+private struct ApprovalContextView: View {
+    let prompt: ChannelApprovalPrompt
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(.orange)
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Label(
+                    prompt.title,
+                    systemImage: prompt.kind == .exec
+                        ? "shield.lefthalf.filled"
+                        : "puzzlepiece.extension"
+                )
+                .font(.subheadline.weight(.medium))
+
+                if let detail = prompt.detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+
+                if prompt.resolvedChoiceID != nil {
+                    Label("Resolved", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.green)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.vertical, 6)
+        }
+        .padding(.leading, 34)
+    }
+}
+
+// MARK: - Approval Footer (pinned above input, thumb-friendly)
+
+private struct ApprovalFooterBar: View {
     let prompt: ChannelApprovalPrompt
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(prompt.title, systemImage: prompt.kind == .exec ? "shield.lefthalf.filled" : "puzzlepiece.extension")
-                .font(.headline)
+        HStack(spacing: 12) {
+            Image(systemName: prompt.kind == .exec
+                ? "shield.lefthalf.filled"
+                : "puzzlepiece.extension")
+                .foregroundStyle(.orange)
+                .font(.subheadline)
 
-            if let detail = prompt.detail {
-                Text(detail)
-                    .foregroundStyle(.secondary)
+            Text(prompt.title)
+                .font(.subheadline)
+                .lineLimit(1)
+
+            Spacer()
+
+            ForEach(prompt.approveChoices) { action in
+                Button { onAction(action) } label: {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .controlSize(.small)
             }
 
-            if let resolved = prompt.resolvedChoiceID {
-                Text("Resolved: \(resolved)")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack {
-                    ForEach(prompt.approveChoices) { action in
-                        ApprovalActionButton(action: action, onAction: onAction)
-                    }
-
-                    if let denyChoice = prompt.denyChoice {
-                        ApprovalActionButton(action: denyChoice, onAction: onAction)
-                    }
+            if let deny = prompt.denyChoice {
+                Button { onAction(deny) } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.semibold))
                 }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .controlSize(.small)
             }
         }
-        .padding(14)
-        .frame(maxWidth: 620, alignment: .leading)
-        .background(Color.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.orange.opacity(0.08))
     }
 }
+
+// MARK: - Option Prompt
 
 private struct OptionPromptView: View {
     let prompt: ChannelOptionPrompt
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(prompt.title)
-                .font(.headline)
+                .font(.subheadline.weight(.medium))
 
             if let detail = prompt.detail {
                 Text(detail)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            FlowLayout(spacing: 8) {
+            WrappingHStack(spacing: 6) {
                 ForEach(prompt.options) { option in
                     Button(option.title) { onAction(option) }
+                        .font(.caption)
                         .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: 620, alignment: .leading)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.leading, 34)
     }
 }
 
-private struct ApprovalActionButton: View {
-    let action: ChannelButtonAction
-    let onAction: @MainActor (ChannelButtonAction) -> Void
+// MARK: - Input Capsule
+
+private struct InputCapsule: View {
+    let placeholder: String
+    @Binding var text: String
+    let isDisabled: Bool
+    let onSend: @MainActor () -> Void
+
+    private var canSend: Bool {
+        !isDisabled && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
-        switch action.style {
-        case .primary:
-            Button(action.title) { onAction(action) }
-                .buttonStyle(.borderedProminent)
-        case .success:
-            Button(action.title) { onAction(action) }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-        case .secondary:
-            Button(action.title) { onAction(action) }
-                .buttonStyle(.bordered)
-        case .danger:
-            Button(action.title) { onAction(action) }
-                .buttonStyle(.bordered)
-                .tint(.red)
+        HStack(alignment: .bottom, spacing: 0) {
+            TextField(placeholder, text: $text, axis: .vertical)
+                .lineLimit(1...6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+            Button(action: onSend) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(canSend ? .blue : .secondary)
+            }
+            .disabled(!canSend)
+            .padding(.trailing, 8)
+            .padding(.bottom, 6)
         }
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 }
 
-private struct FlowLayout<Content: View>: View {
-    let spacing: CGFloat
-    @ViewBuilder let content: Content
+// MARK: - Wrapping Layout
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            content
+private struct WrappingHStack: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(in: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(in: bounds.width, subviews: subviews)
+        for (index, position) in result.positions.enumerated() {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
+                proposal: .unspecified
+            )
         }
+    }
+
+    private struct ArrangeResult {
+        var size: CGSize
+        var positions: [CGPoint]
+    }
+
+    private func arrange(in maxWidth: CGFloat, subviews: Subviews) -> ArrangeResult {
+        var positions: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+
+            if x + size.width > maxWidth, x > 0 {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+
+            positions.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            totalWidth = max(totalWidth, x - spacing)
+        }
+
+        return ArrangeResult(
+            size: CGSize(width: totalWidth, height: y + rowHeight),
+            positions: positions
+        )
     }
 }
 
