@@ -1,9 +1,9 @@
 import SwiftUI
 
-public struct DiscordWorkspaceView: View {
-    @State private var model: DiscordWorkspaceViewModel
+public struct ChatWorkspaceView: View {
+    @State private var model: ChatWorkspaceViewModel
 
-    public init(model: DiscordWorkspaceViewModel = DiscordWorkspaceViewModel()) {
+    public init(model: ChatWorkspaceViewModel = ChatWorkspaceViewModel()) {
         _model = State(initialValue: model)
     }
 
@@ -69,12 +69,29 @@ public struct DiscordWorkspaceView: View {
             }
 
             Section("Connection") {
-                LabeledContent("Status", value: model.isConnected ? "Connected" : "Offline")
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(connectionColor)
+                        .frame(width: 8, height: 8)
+                    Text(connectionLabel)
+
+                    if model.connectionState == .connecting {
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
 
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
                         .font(.caption)
                         .foregroundStyle(.red)
+                }
+
+                Button(role: .destructive) {
+                    Task { await model.unpair() }
+                } label: {
+                    Label("Disconnect", systemImage: "xmark.circle")
                 }
             }
         }
@@ -119,6 +136,23 @@ public struct DiscordWorkspaceView: View {
                 systemImage: "bubble.left.and.bubble.right",
                 description: Text("Create a channel for an agent from the left sidebar.")
             )
+        }
+    }
+
+    private var connectionColor: Color {
+        switch model.connectionState {
+        case .connected: return .green
+        case .connecting: return .orange
+        case .disconnected, .unknown: return .red
+        }
+    }
+
+    private var connectionLabel: String {
+        switch model.connectionState {
+        case .connected: return "Connected"
+        case .connecting: return "Reconnecting…"
+        case .disconnected: return "Disconnected"
+        case .unknown: return "Unknown"
         }
     }
 
@@ -389,6 +423,6 @@ private struct FlowLayout<Content: View>: View {
 }
 
 #Preview {
-    let model = DiscordWorkspaceViewModel()
-    return DiscordWorkspaceView(model: model)
+    let model = ChatWorkspaceViewModel()
+    return ChatWorkspaceView(model: model)
 }

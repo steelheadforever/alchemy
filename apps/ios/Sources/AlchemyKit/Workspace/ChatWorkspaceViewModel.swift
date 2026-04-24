@@ -3,21 +3,50 @@ import Observation
 
 @Observable
 @MainActor
-public final class DiscordWorkspaceViewModel {
+public final class ChatWorkspaceViewModel {
+    public enum ConnectionState: Sendable, Equatable {
+        case unknown
+        case connecting
+        case connected
+        case disconnected
+    }
+
     public private(set) var channels: [WorkspaceChannel] = []
     public private(set) var selectedChannelID: WorkspaceChannel.ID?
     public private(set) var availableAgents: [AgentSummary] = []
     public private(set) var connectionDiagnostics: [ConnectionDiagnostic] = []
-    public private(set) var isConnected = false
+    public private(set) var connectionState: ConnectionState = .unknown
     public private(set) var isLoadingAgents = false
     public var errorMessage: String?
+
+    public var isConnected: Bool { connectionState == .connected }
 
     private let gateway: GatewayClient
     private var eventTask: Task<Void, Never>?
     private var operatorConfiguration: GatewayConnectionConfiguration?
+    private var isBackgrounded = false
+    private var reconnectTask: Task<Void, Never>?
 
     public init(gateway: GatewayClient = GatewayClient()) {
         self.gateway = gateway
+    }
+
+    private static let gatewayURLDefaultsKey = "ai.alchemy.gateway-url"
+
+    private static func saveGatewayURL(_ url: URL) {
+        UserDefaults.standard.set(url.absoluteString, forKey: gatewayURLDefaultsKey)
+    }
+
+    private static func loadGatewayURL() -> URL? {
+        guard let string = UserDefaults.standard.string(forKey: gatewayURLDefaultsKey),
+              !string.isEmpty else {
+            return nil
+        }
+        return URL(string: string)
+    }
+
+    private static func clearGatewayURL() {
+        UserDefaults.standard.removeObject(forKey: gatewayURLDefaultsKey)
     }
 
     public var selectedChannel: WorkspaceChannel? {
@@ -31,6 +60,7 @@ public final class DiscordWorkspaceViewModel {
         do {
             errorMessage = nil
             connectionDiagnostics.removeAll()
+            connectionState = .connecting
             logConnectionDiagnostic("Setup code resolved: \(Self.describeGatewayURL(setupCode.url))")
 
             _ = try await connectBootstrap(using: setupCode)
@@ -40,13 +70,14 @@ public final class DiscordWorkspaceViewModel {
             let operatorConfiguration = try await connectOperator(to: setupCode.url)
             logConnectionDiagnostic("Operator connection succeeded.")
             self.operatorConfiguration = operatorConfiguration
-            isConnected = true
+            Self.saveGatewayURL(setupCode.url)
+            connectionState = .connected
 
             startEventLoop()
             await refreshAgents()
             await refreshChannels()
         } catch {
-            isConnected = false
+            connectionState = .disconnected
             logConnectionDiagnostic("Connection failed: \(Self.describe(error: error))")
             errorMessage = "Gateway connection failed: \(error.localizedDescription)"
         }
@@ -151,11 +182,130 @@ public final class DiscordWorkspaceViewModel {
     }
 
     public func disconnect() async {
+        reconnectTask?.cancel()
+        reconnectTask = nil
         eventTask?.cancel()
         eventTask = nil
         await gateway.disconnect()
-        isConnected = false
+        connectionState = .disconnected
         selectedChannelID = nil
+    }
+
+    public func reconnectIfPossible() async {
+        guard let url = Self.loadGatewayURL() else {
+            connectionState = .disconnected
+            return
+        }
+
+        connectionState = .connecting
+        do {
+            let operatorConfiguration = try await connectOperator(to: url)
+            self.operatorConfiguration = operatorConfiguration
+            connectionState = .connected
+
+            startEventLoop()
+            await refreshAgents()
+            await refreshChannels()
+        } catch {
+            if Self.isAuthRejection(error) {
+                Self.clearGatewayURL()
+                GatewayDeviceIdentity.deleteStored()
+                connectionState = .disconnected
+                print("Alchemy Workspace: reconnect auth rejected, cleared stored state")
+            } else {
+                connectionState = .disconnected
+                print("Alchemy Workspace: reconnect failed: \(Self.describe(error: error))")
+            }
+        }
+    }
+
+    public func handleBackground() async {
+        isBackgrounded = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        eventTask?.cancel()
+        eventTask = nil
+        await gateway.disconnect()
+    }
+
+    public func handleForeground() async {
+        guard isBackgrounded else { return }
+        isBackgrounded = false
+
+        if operatorConfiguration != nil {
+            await reconnectIfPossible()
+        }
+    }
+
+    public func unpair() async {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        eventTask?.cancel()
+        eventTask = nil
+        await gateway.disconnect()
+
+        Self.clearGatewayURL()
+        GatewayDeviceIdentity.deleteStored()
+        await gateway.clearAuthTokens()
+
+        operatorConfiguration = nil
+        channels = []
+        selectedChannelID = nil
+        availableAgents = []
+        connectionDiagnostics = []
+        errorMessage = nil
+        connectionState = .disconnected
+    }
+
+    private func attemptReconnectWithBackoff() async {
+        let delays: [UInt64] = [1, 2, 4, 8, 16]
+
+        for (attempt, delaySec) in delays.enumerated() {
+            guard !Task.isCancelled else { return }
+
+            connectionState = .connecting
+            print("Alchemy Workspace: reconnect attempt \(attempt + 1)/\(delays.count) after \(delaySec)s")
+
+            try? await Task.sleep(nanoseconds: delaySec * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard let url = Self.loadGatewayURL() else {
+                connectionState = .disconnected
+                return
+            }
+
+            do {
+                let config = try await connectOperator(to: url)
+                self.operatorConfiguration = config
+                connectionState = .connected
+                startEventLoop()
+                await refreshAgents()
+                await refreshChannels()
+                return
+            } catch {
+                if Self.isAuthRejection(error) {
+                    Self.clearGatewayURL()
+                    GatewayDeviceIdentity.deleteStored()
+                    connectionState = .disconnected
+                    print("Alchemy Workspace: reconnect auth rejected")
+                    return
+                }
+                print("Alchemy Workspace: reconnect attempt \(attempt + 1) failed: \(Self.describe(error: error))")
+            }
+        }
+
+        connectionState = .disconnected
+        print("Alchemy Workspace: reconnect exhausted all attempts")
+    }
+
+    private static func isAuthRejection(_ error: any Error) -> Bool {
+        guard let response = error as? GatewayResponseError else {
+            return false
+        }
+
+        let code = response.code.uppercased()
+        return code == "AUTH_FAILED" || code == "UNAUTHORIZED" || code == "FORBIDDEN"
+            || code == "TOKEN_REVOKED" || code == "DEVICE_REVOKED"
     }
 
     public func refreshChannels() async {
@@ -383,6 +533,13 @@ public final class DiscordWorkspaceViewModel {
             for await event in stream {
                 print("Alchemy Gateway event: name=\(event.name) seq=\(event.sequence.map(String.init) ?? "<none>")")
                 await self.handle(event: event)
+            }
+
+            guard !Task.isCancelled, !self.isBackgrounded else { return }
+            print("Alchemy Workspace: event stream ended, starting reconnect with backoff")
+            self.reconnectTask?.cancel()
+            self.reconnectTask = Task { [weak self] in
+                await self?.attemptReconnectWithBackoff()
             }
         }
     }

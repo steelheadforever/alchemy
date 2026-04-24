@@ -27,11 +27,21 @@ public actor GatewayClient {
     public init(
         transport: any GatewayTransporting = URLSessionGatewayTransport(),
         authStore: GatewayAuthStore = GatewayAuthStore(),
-        deviceIdentity: GatewayDeviceIdentity = .generate()
+        deviceIdentity: GatewayDeviceIdentity = .loadOrGenerate()
     ) {
         self.transport = transport
         self.authStore = authStore
         self.deviceIdentity = deviceIdentity
+    }
+
+    public var deviceID: String {
+        get throws { try deviceIdentity.deviceID }
+    }
+
+    public func clearAuthTokens() async {
+        guard let id = try? deviceIdentity.deviceID else { return }
+        await authStore.clearToken(deviceID: id, role: GatewayRole.operator.rawValue)
+        await authStore.clearToken(deviceID: id, role: GatewayRole.node.rawValue)
     }
 
     public func events() -> AsyncStream<GatewayEvent> {
@@ -191,7 +201,17 @@ public actor GatewayClient {
                 try await handleIncomingText(text)
             }
         } catch {
+            hello = nil
             failPending(with: error)
+            finishAllEventStreams()
+        }
+    }
+
+    private func finishAllEventStreams() {
+        let streams = eventStreams
+        eventStreams.removeAll()
+        for continuation in streams.values {
+            continuation.finish()
         }
     }
 
