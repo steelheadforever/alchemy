@@ -579,38 +579,70 @@ public final class ChatWorkspaceViewModel {
 
     private func merge(_ item: ChannelTimelineItem, into channel: inout WorkspaceChannel) {
         if let existingIndex = channel.timeline.firstIndex(where: { $0.id == item.id }) {
-            switch (channel.timeline[existingIndex].kind, item.kind) {
-            case (.message(let existing), .message(let incoming)):
-                channel.timeline[existingIndex].kind = .message(
-                    ChannelMessage(
-                        id: incoming.id,
-                        role: incoming.role,
-                        text: mergeText(existing.text, incoming.text, streaming: incoming.isStreaming),
-                        isStreaming: incoming.isStreaming
-                    )
-                )
-            case (.tool, .tool):
-                channel.timeline[existingIndex] = item
-            case (.approval(let existing), .approval(let incoming)):
-                channel.timeline[existingIndex].kind = .approval(
-                    ChannelApprovalPrompt(
-                        id: incoming.id,
-                        title: incoming.title,
-                        detail: incoming.detail ?? existing.detail,
-                        sessionKey: incoming.sessionKey ?? existing.sessionKey,
-                        kind: incoming.kind,
-                        approveChoices: incoming.approveChoices.isEmpty ? existing.approveChoices : incoming.approveChoices,
-                        denyChoice: incoming.denyChoice ?? existing.denyChoice,
-                        resolvedChoiceID: incoming.resolvedChoiceID ?? existing.resolvedChoiceID
-                    )
-                )
-            default:
-                channel.timeline[existingIndex] = item
-            }
+            mergeAtIndex(existingIndex, with: item, into: &channel)
+            return
+        }
+
+        if case .message(let incoming) = item.kind,
+           let existingIndex = findDuplicateMessage(incoming, in: channel) {
+            mergeAtIndex(existingIndex, with: item, into: &channel)
             return
         }
 
         channel.timeline.append(item)
+    }
+
+    private func mergeAtIndex(_ index: Int, with item: ChannelTimelineItem, into channel: inout WorkspaceChannel) {
+        switch (channel.timeline[index].kind, item.kind) {
+        case (.message(let existing), .message(let incoming)):
+            channel.timeline[index].kind = .message(
+                ChannelMessage(
+                    id: incoming.id,
+                    role: incoming.role,
+                    text: mergeText(existing.text, incoming.text, streaming: incoming.isStreaming),
+                    isStreaming: incoming.isStreaming
+                )
+            )
+        case (.tool, .tool):
+            channel.timeline[index] = item
+        case (.approval(let existing), .approval(let incoming)):
+            channel.timeline[index].kind = .approval(
+                ChannelApprovalPrompt(
+                    id: incoming.id,
+                    title: incoming.title,
+                    detail: incoming.detail ?? existing.detail,
+                    sessionKey: incoming.sessionKey ?? existing.sessionKey,
+                    kind: incoming.kind,
+                    approveChoices: incoming.approveChoices.isEmpty ? existing.approveChoices : incoming.approveChoices,
+                    denyChoice: incoming.denyChoice ?? existing.denyChoice,
+                    resolvedChoiceID: incoming.resolvedChoiceID ?? existing.resolvedChoiceID
+                )
+            )
+        default:
+            channel.timeline[index] = item
+        }
+    }
+
+    private func findDuplicateMessage(
+        _ incoming: ChannelMessage,
+        in channel: WorkspaceChannel
+    ) -> Int? {
+        let searchRange = channel.timeline.indices.suffix(10)
+        return searchRange.last { index in
+            guard case .message(let existing) = channel.timeline[index].kind else {
+                return false
+            }
+            guard existing.role == incoming.role else {
+                return false
+            }
+            return textsOverlap(existing.text, incoming.text)
+        }
+    }
+
+    private func textsOverlap(_ a: String, _ b: String) -> Bool {
+        if a.isEmpty && b.isEmpty { return true }
+        if a.isEmpty || b.isEmpty { return false }
+        return a.hasPrefix(b) || b.hasPrefix(a)
     }
 
     private func mergeText(_ existing: String, _ incoming: String, streaming: Bool) -> String {

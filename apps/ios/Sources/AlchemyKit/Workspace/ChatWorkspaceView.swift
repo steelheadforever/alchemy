@@ -251,8 +251,7 @@ private struct MessageBubbleView: View {
                 Text(title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(message.text.isEmpty && message.isStreaming ? "…" : message.text)
-                    .textSelection(.enabled)
+                TypewriterText(text: message.text, isStreaming: message.isStreaming)
                 if message.isStreaming {
                     ProgressView()
                         .controlSize(.small)
@@ -288,6 +287,41 @@ private struct MessageBubbleView: View {
         case .system:
             return Color.orange.opacity(0.15)
         }
+    }
+}
+
+private struct TypewriterText: View {
+    let text: String
+    let isStreaming: Bool
+
+    @State private var revealedCount = 0
+
+    var body: some View {
+        let displayText: String = if !isStreaming {
+            text
+        } else if text.isEmpty {
+            "…"
+        } else {
+            String(text.prefix(revealedCount))
+        }
+
+        Text(displayText)
+            .textSelection(.enabled)
+            .task(id: isStreaming ? text.count : -1) {
+                guard isStreaming, revealedCount < text.count else { return }
+                while revealedCount < text.count {
+                    let pending = text.count - revealedCount
+                    let step = max(1, pending / 6)
+                    revealedCount = min(revealedCount + step, text.count)
+                    try? await Task.sleep(for: .milliseconds(16))
+                    guard !Task.isCancelled else { return }
+                }
+            }
+            .onChange(of: isStreaming) { _, streaming in
+                if !streaming {
+                    revealedCount = text.count
+                }
+            }
     }
 }
 
