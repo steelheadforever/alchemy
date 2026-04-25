@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 
+import { resolveTailscaleBin } from "./sidecar-serve.js";
+
 export class PreflightError extends Error {
   constructor(message) {
     super(message);
@@ -20,6 +22,7 @@ export async function runPreflight({ openclaw, options, logger, deps = DEFAULT_D
   await checkOpenclawInstalled({ openclaw, logger });
   const probe = await probeGateway({ openclaw, logger });
 
+  let tailscaleBin = null;
   if (options?.url) {
     logger?.info("Explicit --url override; skipping tailscale preflight checks", {
       url: options.url,
@@ -27,10 +30,11 @@ export async function runPreflight({ openclaw, options, logger, deps = DEFAULT_D
   } else {
     checkTailscaleUpFromProbe({ probe, logger });
     checkTailscaleServeFromProbe({ probe, logger });
+    tailscaleBin = await checkTailscaleBinResolvable({ deps, logger });
   }
 
   await warnIfTrustedProxiesMissing({ deps, logger, probe });
-  return { probe };
+  return { probe, tailscaleBin };
 }
 
 async function checkOpenclawInstalled({ openclaw, logger }) {
@@ -65,6 +69,20 @@ function checkTailscaleUpFromProbe({ probe, logger }) {
     );
   }
   logger?.info("Tailscale is up", { tailnetIPv4 });
+}
+
+async function checkTailscaleBinResolvable({ deps, logger }) {
+  const resolveDeps = deps.runCommand ? { runCommand: deps.runCommand } : undefined;
+  const bin = await resolveTailscaleBin({ deps: resolveDeps, logger });
+  if (!bin) {
+    throw new PreflightError(
+      "Could not locate the tailscale binary on PATH or at common install paths " +
+        "(/Applications/Tailscale.app/Contents/MacOS/Tailscale, /usr/local/bin/tailscale, " +
+        "/opt/homebrew/bin/tailscale). Install Tailscale or symlink the CLI before retrying.",
+    );
+  }
+  logger?.info("Tailscale binary resolvable", { bin });
+  return bin;
 }
 
 function checkTailscaleServeFromProbe({ probe, logger }) {

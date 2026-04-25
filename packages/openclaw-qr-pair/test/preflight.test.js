@@ -54,6 +54,12 @@ function makeDeps(overrides = {}) {
       warn(message) {
         warnings.push(message);
       },
+      async runCommand(cmd, args) {
+        if (cmd === "tailscale" && args?.[0] === "version") {
+          return "1.0.0";
+        }
+        throw new Error(`unexpected command in test: ${cmd}`);
+      },
       ...overrides,
     },
   };
@@ -175,4 +181,48 @@ test("skips tailscale-up and serve-mode checks when --url is provided", async ()
   });
 
   assert.ok(result.probe);
+});
+
+test("returns resolved tailscale binary path on success", async () => {
+  const { deps } = makeDeps();
+  const result = await runPreflight({
+    openclaw: makeOpenclaw({ probe: makeProbe() }),
+    options: { url: null },
+    deps,
+  });
+  assert.equal(result.tailscaleBin, "tailscale");
+});
+
+test("throws when tailscale binary cannot be resolved anywhere", async () => {
+  const { deps } = makeDeps({
+    async runCommand() {
+      throw new Error("not found");
+    },
+  });
+  await assert.rejects(
+    runPreflight({
+      openclaw: makeOpenclaw({ probe: makeProbe() }),
+      options: { url: null },
+      deps,
+    }),
+    (error) =>
+      error instanceof PreflightError && /Could not locate the tailscale binary/.test(error.message),
+  );
+});
+
+test("does not check tailscale binary when --url override is set", async () => {
+  let runCommandCalls = 0;
+  const { deps } = makeDeps({
+    async runCommand() {
+      runCommandCalls += 1;
+      throw new Error("should not be called");
+    },
+  });
+  const result = await runPreflight({
+    openclaw: makeOpenclaw({ probe: makeProbe({ tailscaleMode: null, tailnetIPv4: null }) }),
+    options: { url: "wss://gateway.example/ws" },
+    deps,
+  });
+  assert.equal(runCommandCalls, 0);
+  assert.equal(result.tailscaleBin, null);
 });
