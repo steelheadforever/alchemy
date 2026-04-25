@@ -201,6 +201,11 @@ public actor GatewayClient {
                 try await handleIncomingText(text)
             }
         } catch {
+            // If the task was cancelled (by disconnect() or a new connect()),
+            // skip cleanup — the caller already handled it. Without this guard,
+            // the old read loop's catch can race with a new connection and
+            // fail its connectContinuation via failPending.
+            guard !Task.isCancelled else { return }
             hello = nil
             failPending(with: error)
             finishAllEventStreams()
@@ -414,7 +419,7 @@ public actor GatewayClient {
 
         let resolvedDeviceToken = explicitDeviceToken ??
             ((explicitGatewayToken == nil && explicitPassword == nil &&
-              (explicitBootstrapToken == nil || stored != nil)) ? stored?.token : nil)
+              explicitBootstrapToken == nil) ? stored?.token : nil)
 
         let usingStoredDeviceToken =
             resolvedDeviceToken != nil &&
@@ -430,6 +435,21 @@ public actor GatewayClient {
             ? explicitBootstrapToken
             : nil
 
+        let redact: (String?) -> String = { value in
+            guard let v = value, !v.isEmpty else { return "<nil>" }
+            return v.count > 8 ? "\(v.prefix(4))...\(v.suffix(4))" : "<short>"
+        }
+        print(
+            """
+            Alchemy Gateway selectConnectAuth: role=\(configuration.role.rawValue) \
+            explicitBootstrap=\(redact(explicitBootstrapToken)) \
+            explicitDevice=\(redact(explicitDeviceToken)) \
+            stored=\(redact(stored?.token)) storedRole=\(stored.map { _ in configuration.role.rawValue } ?? "<none>") \
+            resolved=\(redact(resolvedDeviceToken)) \
+            authToken=\(redact(authToken)) authBootstrap=\(redact(authBootstrapToken))
+            """
+        )
+
         return PendingAuthSelection(
             authToken: authToken,
             authBootstrapToken: authBootstrapToken,
@@ -441,6 +461,14 @@ public actor GatewayClient {
     }
 
     private func storeAuthTokens(from hello: GatewayHello) async throws {
+        print(
+            """
+            Alchemy Gateway storeAuthTokens: \
+            primaryToken=\(hello.primaryToken.map { "\($0.role.rawValue)" } ?? "<nil>") \
+            additionalTokens=\(hello.additionalTokens.map { "\($0.role.rawValue)" })
+            """
+        )
+
         if let primaryToken = hello.primaryToken {
             await authStore.storeToken(
                 deviceID: try deviceIdentity.deviceID,
@@ -451,6 +479,7 @@ public actor GatewayClient {
         }
 
         for token in hello.additionalTokens {
+            print("Alchemy Gateway storeAuthTokens: storing additional role=\(token.role.rawValue)")
             await authStore.storeToken(
                 deviceID: try deviceIdentity.deviceID,
                 role: token.role.rawValue,

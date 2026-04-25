@@ -105,7 +105,12 @@ export class PhoneServer extends EventEmitter {
       auth?.bootstrapToken ?? auth?.token ?? auth?.deviceToken;
 
     if (token !== this.#bootstrapToken) {
-      this.#logger?.warn("Phone connect auth failed");
+      this.#logger?.warn("Phone connect auth failed", {
+        authKeys: Object.keys(auth || {}),
+        receivedTokenPrefix: token ? token.slice(0, 8) + "..." : "<none>",
+        expectedTokenPrefix: this.#bootstrapToken ? this.#bootstrapToken.slice(0, 8) + "..." : "<none>",
+        role: frame.params?.role,
+      });
       this.#sendToWs(ws, {
         type: "res",
         id: frame.id,
@@ -131,6 +136,8 @@ export class PhoneServer extends EventEmitter {
           "sessions.create",
           "sessions.messages.subscribe",
           "sessions.send",
+          "exec.approval.resolve",
+          "plugin.approval.resolve",
         ],
         events: [
           "session.message",
@@ -150,6 +157,25 @@ export class PhoneServer extends EventEmitter {
         deviceToken: this.#bootstrapToken,
         role,
         scopes,
+        // Include tokens for both roles so iOS can store credentials for
+        // its two-phase connect: node bootstrap → operator reconnect.
+        deviceTokens: [
+          {
+            deviceToken: this.#bootstrapToken,
+            role: "node",
+            scopes: [],
+          },
+          {
+            deviceToken: this.#bootstrapToken,
+            role: "operator",
+            scopes: [
+              "operator.approvals",
+              "operator.read",
+              "operator.talk.secrets",
+              "operator.write",
+            ],
+          },
+        ],
       },
     };
 
