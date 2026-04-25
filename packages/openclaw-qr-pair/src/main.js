@@ -11,8 +11,9 @@ import {
   summarizeDeviceSnapshot,
   summarizePairingCandidates,
 } from "./pending-requests.js";
-import { decodeSetupCode } from "./setup-code.js";
+import { decodeSetupCode, encodeSetupCode } from "./setup-code.js";
 import { DiagnosticLogger } from "./logger.js";
+import { Sidecar } from "./sidecar.js";
 
 export async function main(argv) {
   const options = parseArgs(argv);
@@ -23,6 +24,7 @@ export async function main(argv) {
     options: {
       host: options.host,
       port: options.port,
+      sidecarPort: options.sidecarPort,
       ttlSeconds: options.ttlSeconds,
       pollIntervalSeconds: options.pollIntervalSeconds,
       name: options.name,
@@ -38,13 +40,15 @@ export async function main(argv) {
   const gatewayProbe = await openclaw.probeGateway();
   logger.info("Gateway probe succeeded", { gatewayProbe });
 
+  // Step 1: Resolve gateway address and generate setup code.
+  // The sidecar pairs with the gateway (not the phone).
   const networkChoice = options.remote
     ? { host: "openclaw remote configuration", source: "remote" }
     : resolveGatewayAddress(options, logger);
   const gatewayUrl = options.remote ? null : options.url ?? `ws://${networkChoice.host}:${options.port}`;
   const setup = await openclaw.generateSetupCode({ url: gatewayUrl, remote: options.remote });
   const decodedSetup = decodeSetupCode(setup.setupCode);
-  logger.info("Setup code generated", {
+  logger.info("Setup code generated for gateway pairing", {
     remote: options.remote,
     requestedGatewayUrl: gatewayUrl,
     returnedGatewayUrl: setup.gatewayUrl,
@@ -52,45 +56,89 @@ export async function main(argv) {
     decodedSetup,
   });
 
-  printHeader({
-    name: options.name,
-    gatewayUrl: setup.gatewayUrl ?? decodedSetup.url,
-    networkChoice,
+  const resolvedGatewayUrl = setup.gatewayUrl ?? decodedSetup.url;
+  const bootstrapToken = decodedSetup.bootstrapToken;
+
+  // Step 2: Create the sidecar and connect it to the gateway.
+  const sidecar = new Sidecar({
+    gatewayUrl: resolvedGatewayUrl,
+    bootstrapToken,
+    sidecarPort: options.sidecarPort,
+    logger,
   });
 
-  qrcode.generate(setup.setupCode, { small: true });
+  console.log(`Host: ${options.name}`);
+  console.log(`Gateway URL: ${resolvedGatewayUrl}`);
+  printNetworkInfo(networkChoice);
+  console.log(`Local machine: ${os.hostname()}`);
   console.log("");
-  console.log("Scan the QR in the iOS app to begin pairing.");
+  console.log("Connecting sidecar to gateway...");
+
+  // Step 3: Connect sidecar to gateway AND approve its pairing concurrently.
+  const startedAt = Date.now();
+  const baseline = await openclaw.listDevices();
+  logger.info("Captured baseline device snapshot", summarizeDeviceSnapshot(baseline));
+
+  const [, approved] = await Promise.all([
+    sidecar.connectToGateway(),
+    waitForAndApproveRequest({
+      openclaw,
+      baseline,
+      ttlSeconds: options.ttlSeconds,
+      pollIntervalSeconds: options.pollIntervalSeconds,
+      startedAt,
+      logger,
+    }),
+  ]);
+
+  if (approved.kind === "paired") {
+    logger.info("Sidecar paired without manual approval", { deviceId: approved.deviceId });
+  } else {
+    logger.info("Sidecar pairing approved", { requestId: approved.requestId });
+  }
+
+  console.log("Sidecar connected to gateway.");
+
+  // Step 4: Start the phone-facing server.
+  await sidecar.startPhoneServer();
+
+  // Step 5: Generate a NEW QR code pointing to the sidecar (not the gateway).
+  const sidecarHost = networkChoice.host === "openclaw remote configuration"
+    ? "127.0.0.1"
+    : networkChoice.host;
+  const sidecarUrl = `ws://${sidecarHost}:${options.sidecarPort}`;
+  const phoneSetupCode = encodeSetupCode({
+    url: sidecarUrl,
+    bootstrapToken,
+  });
+
+  logger.info("Phone QR generated", {
+    sidecarUrl,
+    sidecarPort: options.sidecarPort,
+  });
+
+  console.log("");
+  console.log(`Sidecar URL: ${sidecarUrl}`);
+  console.log("");
+
+  qrcode.generate(phoneSetupCode, { small: true });
+  console.log("");
+  console.log("Scan the QR in the iOS app to connect through the sidecar.");
+  console.log("Messages will be buffered while the phone is disconnected.");
   if (options.verbose) {
-    console.log("Verbose diagnostics are enabled; pairing details will be written to stderr.");
+    console.log("Verbose diagnostics are enabled; details will be written to stderr.");
   }
 
   if (options.dryRun) {
     console.log("");
-    console.log(`Setup code: ${setup.setupCode}`);
+    console.log(`Setup code: ${phoneSetupCode}`);
     return;
   }
 
-  const startedAt = Date.now();
-  const baseline = await openclaw.listDevices();
-  logger.info("Captured baseline device snapshot", summarizeDeviceSnapshot(baseline));
-  const approved = await waitForAndApproveRequest({
-    openclaw,
-    baseline,
-    ttlSeconds: options.ttlSeconds,
-    pollIntervalSeconds: options.pollIntervalSeconds,
-    startedAt,
-    logger,
-  });
-
-  console.log("");
-  if (approved.kind === "paired") {
-    console.log(
-      `Bootstrap pairing completed without manual approval for device ${approved.deviceId}.`,
-    );
-  } else {
-    console.log(`Approved device pairing request ${approved.requestId}.`);
-  }
+  // Step 6: Run until Ctrl+C.
+  console.log("Press Ctrl+C to stop.");
+  await sidecar.run();
+  console.log("Sidecar stopped.");
 }
 
 async function waitForAndApproveRequest({
@@ -169,10 +217,7 @@ async function waitForAndApproveRequest({
   );
 }
 
-function printHeader({ name, gatewayUrl, networkChoice }) {
-  console.log(`Host: ${name}`);
-  console.log(`Gateway URL: ${gatewayUrl}`);
-
+function printNetworkInfo(networkChoice) {
   if (networkChoice.source === "tailscale") {
     console.log(`Using Tailscale address: ${networkChoice.host}`);
     console.log("Warning: current upstream OpenClaw docs say mobile pairing may fail closed for Tailscale ws:// URLs.");
@@ -191,9 +236,6 @@ function printHeader({ name, gatewayUrl, networkChoice }) {
   } else {
     console.log(`Using configured host override: ${networkChoice.host}`);
   }
-
-  console.log(`Local machine: ${os.hostname()}`);
-  console.log("");
 }
 
 function delay(ms) {

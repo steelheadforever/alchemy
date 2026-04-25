@@ -1,6 +1,6 @@
 import os from "node:os";
 
-const FLAG_WITH_VALUE = new Set(["--host", "--port", "--ttl", "--name", "--url", "--poll-interval"]);
+const FLAG_WITH_VALUE = new Set(["--host", "--port", "--ttl", "--name", "--url", "--poll-interval", "--sidecar-port"]);
 
 export function parseArgs(argv) {
   const options = {
@@ -10,6 +10,7 @@ export function parseArgs(argv) {
     pollIntervalSeconds: 2,
     name: os.hostname(),
     url: null,
+    sidecarPort: null,
     remote: false,
     dryRun: false,
     verbose: process.env.OPENCLAW_QR_PAIR_DEBUG === "1",
@@ -63,6 +64,9 @@ export function parseArgs(argv) {
       case "--url":
         options.url = value.trim();
         break;
+      case "--sidecar-port":
+        options.sidecarPort = parseIntegerFlag(token, value);
+        break;
       default:
         break;
     }
@@ -70,6 +74,10 @@ export function parseArgs(argv) {
 
   if (options.remote && options.url) {
     throw new Error("--remote and --url cannot be used together");
+  }
+
+  if (options.sidecarPort === null) {
+    options.sidecarPort = options.port + 1;
   }
 
   return options;
