@@ -49,14 +49,15 @@ enum GatewayWorkspaceParsing {
             }
 
             let title =
+                item["groupChannel"]?.stringValue ??
                 item["label"]?.stringValue ??
+                item["displayName"]?.stringValue ??
                 item["title"]?.stringValue ??
-                item["derivedTitle"]?.stringValue ??
                 item["name"]?.stringValue ??
                 "# \(sessionKey)"
 
             var timeline: [ChannelTimelineItem] = []
-            if let lastMessage = parseLastMessage(item["lastMessage"], sessionKey: sessionKey) {
+            if let lastMessage = parseLastMessage(item["lastMessage"] ?? item["lastMessagePreview"], sessionKey: sessionKey) {
                 timeline.append(lastMessage)
             }
 

@@ -24,8 +24,11 @@ public struct ChatWorkspaceView: View {
                 guard
                     let id = newValue,
                     let channel = model.channels.first(where: { $0.id == id })
-                else { return }
-                Task { await model.selectChannel(channel) }
+                else {
+                    model.deselectChannel()
+                    return
+                }
+                model.selectChannel(channel)
             }
         )) {
             Section {

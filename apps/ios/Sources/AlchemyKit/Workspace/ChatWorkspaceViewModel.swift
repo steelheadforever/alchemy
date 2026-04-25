@@ -52,9 +52,13 @@ public final class ChatWorkspaceViewModel {
 
     public var selectedChannel: WorkspaceChannel? {
         guard let selectedChannelID else {
-            return channels.first
+            return nil
         }
         return channels.first(where: { $0.id == selectedChannelID })
+    }
+
+    public func deselectChannel() {
+        selectedChannelID = nil
     }
 
     public func connect(using setupCode: SetupCodePayload) async {
@@ -419,18 +423,28 @@ public final class ChatWorkspaceViewModel {
         return true
     }
 
-    public func selectChannel(_ channel: WorkspaceChannel) async {
+    public func selectChannel(_ channel: WorkspaceChannel) {
         selectChannelID(channel.id)
-        await ensureSubscribed(channel.sessionKey)
+        Task { await ensureSubscribed(channel.sessionKey) }
     }
 
     private func ensureSubscribed(_ sessionKey: String) async {
         guard isConnected, !subscribedSessionKeys.contains(sessionKey) else { return }
         do {
-            _ = try await gateway.subscribeSessionMessages(key: sessionKey)
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    _ = try await self.gateway.subscribeSessionMessages(key: sessionKey)
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(5))
+                    throw CancellationError()
+                }
+                try await group.next()
+                group.cancelAll()
+            }
             subscribedSessionKeys.insert(sessionKey)
         } catch {
-            print("Alchemy Workspace: subscribe failed session=\(sessionKey)")
+            print("Alchemy Workspace: subscribe failed session=\(sessionKey) error=\(error)")
         }
     }
 
