@@ -4,13 +4,6 @@ import qrcode from "qrcode-terminal";
 import { parseArgs } from "./args.js";
 import { OpenClawCli } from "./openclaw-cli.js";
 import { resolveGatewayAddress } from "./network.js";
-import {
-  detectNodePairingChanges,
-  getDeviceId,
-  getRequestId,
-  summarizeDeviceSnapshot,
-  summarizePairingCandidates,
-} from "./pending-requests.js";
 import { decodeSetupCode, encodeSetupCode } from "./setup-code.js";
 import { DiagnosticLogger } from "./logger.js";
 import { runPreflight } from "./preflight.js";
@@ -89,29 +82,12 @@ export async function main(argv) {
   console.log("");
   console.log("Connecting sidecar to gateway...");
 
-  // Step 3: Connect sidecar to gateway AND approve its pairing concurrently.
-  const startedAt = Date.now();
-  const baseline = await openclaw.listDevices();
-  logger.info("Captured baseline device snapshot", summarizeDeviceSnapshot(baseline));
-
-  const [, approved] = await Promise.all([
-    sidecar.connectToGateway(),
-    waitForAndApproveRequest({
-      openclaw,
-      baseline,
-      ttlSeconds: options.ttlSeconds,
-      pollIntervalSeconds: options.pollIntervalSeconds,
-      startedAt,
-      logger,
-    }),
-  ]);
-
-  if (approved.kind === "paired") {
-    logger.info("Sidecar paired without manual approval", { deviceId: approved.deviceId });
-  } else {
-    logger.info("Sidecar pairing approved", { requestId: approved.requestId });
-  }
-
+  // Step 3: Connect sidecar to gateway. The sidecar handles its own auth
+  // (bootstrap token on first run, persisted deviceToken on reconnects). The
+  // gateway auto-approves node pairings, so no separate approval poll is
+  // needed — the old waitForAndApproveRequest path was for the pre-sidecar
+  // architecture where the phone paired with the gateway directly.
+  await sidecar.connectToGateway();
   console.log("Sidecar connected to gateway.");
 
   // Step 4: Start the phone-facing server on the sidecar port.
@@ -200,82 +176,6 @@ function registerServeRestoreHooks(serveManager, logger) {
   return true;
 }
 
-async function waitForAndApproveRequest({
-  openclaw,
-  baseline,
-  ttlSeconds,
-  pollIntervalSeconds,
-  startedAt,
-  logger,
-}) {
-  const deadline = startedAt + ttlSeconds * 1000;
-  let pollCount = 0;
-
-  while (Date.now() < deadline) {
-    pollCount += 1;
-    const current = await openclaw.listDevices();
-    const candidates = detectNodePairingChanges({
-      baseline,
-      current,
-      sinceMs: startedAt,
-    });
-    logger?.info("Polled device snapshot", {
-      pollCount,
-      elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
-      remainingSeconds: Math.max(0, Math.ceil((deadline - Date.now()) / 1000)),
-      snapshot: summarizeDeviceSnapshot(current),
-      candidates: summarizePairingCandidates(candidates),
-    });
-
-    if (candidates.paired.length > 1) {
-      logger?.error("Multiple new paired node devices detected", {
-        candidates: summarizePairingCandidates(candidates),
-      });
-      throw new Error(
-        "Multiple new paired node devices appeared during the bootstrap window; refusing to continue automatically.",
-      );
-    }
-
-    if (candidates.paired.length === 1) {
-      logger?.info("Detected silently paired node device", {
-        deviceId: getDeviceId(candidates.paired[0]) || "unknown-device",
-      });
-      return {
-        kind: "paired",
-        deviceId: getDeviceId(candidates.paired[0]) || "unknown-device",
-      };
-    }
-
-    if (candidates.pending.length > 1) {
-      logger?.error("Multiple new pending node requests detected", {
-        candidates: summarizePairingCandidates(candidates),
-      });
-      throw new Error(
-        "Multiple new pending node pairing requests appeared during the approval window; refusing to auto-approve.",
-      );
-    }
-
-    if (candidates.pending.length === 1) {
-      const requestId = getRequestId(candidates.pending[0]);
-      logger?.info("Approving pending node pairing request", { requestId });
-      await openclaw.approveDevice(requestId);
-      logger?.info("Pending node pairing request approved", { requestId });
-      return { kind: "approved", requestId };
-    }
-
-    await delay(pollIntervalSeconds * 1000);
-  }
-
-  logger?.error("Pairing window expired", {
-    ttlSeconds,
-    pollCount,
-    startedAt: new Date(startedAt).toISOString(),
-  });
-  throw new Error(
-    "Pairing window expired before a new node request appeared. If the phone said it could not connect to the server, it likely could not reach the Gateway URL printed above; retry with --url ws://<reachable-host>:<port> or use --verbose for address and polling diagnostics.",
-  );
-}
-
 function printNetworkInfo(networkChoice) {
   if (networkChoice.source === "tailscale") {
     console.log(`Using Tailscale address: ${networkChoice.host}`);
@@ -297,8 +197,3 @@ function printNetworkInfo(networkChoice) {
   }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}

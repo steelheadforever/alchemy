@@ -10,11 +10,18 @@ import {
 } from "./sidecar-identity.js";
 
 const CLIENT_DESCRIPTOR = {
-  id: "openclaw-sidecar",
+  id: "openclaw-ios",
   version: "0.1.0",
-  platform: "node",
-  deviceFamily: "server",
+  platform: "ios",
+  deviceFamily: "phone",
 };
+
+const OPERATOR_SCOPES = [
+  "operator.approvals",
+  "operator.read",
+  "operator.talk.secrets",
+  "operator.write",
+];
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 16000;
@@ -52,57 +59,45 @@ export class GatewayConnection extends EventEmitter {
   }
 
   async connect() {
-    // Phase 1: connect as node with bootstrapToken to receive device tokens.
-    this.#logger?.info("Gateway phase 1: connecting as node");
-    const nodeHello = await this.#connectWithRole({
+    // Connect as node with the bootstrap token (or a previously stored device
+    // token if we have one from a prior session). The gateway accepts node-role
+    // connections for sessions.messages.subscribe and other forwarding methods,
+    // so we do NOT escalate to operator role: bootstrap-issued device tokens
+    // are bound to role=node and the gateway refuses operator promotion without
+    // an explicit device.token.rotate that we currently do not implement.
+    const useStoredToken = Boolean(this.#identity.deviceToken);
+    const authField = useStoredToken ? "deviceToken" : "bootstrapToken";
+    const authValue = useStoredToken ? this.#identity.deviceToken : this.#bootstrapToken;
+    this.#logger?.info("Gateway connect: connecting as node", {
+      auth: authField,
+    });
+
+    const hello = await this.#connectWithRole({
       role: "node",
       mode: "node",
-      scopes: ["node.read"],
-      authField: "bootstrapToken",
-      authValue: this.#bootstrapToken,
+      scopes: [],
+      authField,
+      authValue,
     });
 
-    // Extract device tokens from hello.
-    const deviceToken = this.#extractDeviceToken(nodeHello, "operator");
-    if (!deviceToken) {
-      throw new Error("Gateway did not issue operator device token during node phase");
+    // Persist the issued device token for reconnects.
+    const issued = this.#extractDeviceToken(hello, "node");
+    if (issued && issued !== this.#identity.deviceToken) {
+      this.#identity.deviceToken = issued;
+      saveIdentity(undefined, this.#identity);
+      this.#logger?.info("Stored device token from gateway hello");
     }
-
-    this.#identity.deviceToken = deviceToken;
-    saveIdentity(undefined, this.#identity);
-    this.#logger?.info("Gateway phase 1 complete, received operator device token");
-
-    // Close phase 1 connection.
-    this.#closeWs();
-
-    // Phase 2: reconnect as operator with device token.
-    return this.#connectAsOperator();
-  }
-
-  async #connectAsOperator() {
-    this.#logger?.info("Gateway phase 2: connecting as operator");
-    const hello = await this.#connectWithRole({
-      role: "operator",
-      mode: "operator",
-      scopes: [
-        "operator.read",
-        "operator.write",
-        "operator.admin",
-      ],
-      authField: "deviceToken",
-      authValue: this.#identity.deviceToken,
-    });
 
     this.#hello = hello;
     this.#reconnectAttempt = 0;
     this.emit("connected", hello);
-    this.#logger?.info("Gateway phase 2 complete, operator connected", {
+    this.#logger?.info("Gateway connection established", {
       connectionID: hello?.server?.connId,
     });
     return hello;
   }
 
-  #connectWithRole({ role, mode, scopes, authField, authValue }) {
+  #connectWithRole({ role, mode, scopes, authField, authValue, clientIdOverride }) {
     return new Promise((resolve, reject) => {
       this.#connectResolve = resolve;
       this.#connectReject = reject;
@@ -117,7 +112,7 @@ export class GatewayConnection extends EventEmitter {
       this.#ws.on("message", (data) => {
         try {
           const frame = JSON.parse(data.toString());
-          this.#handleFrame(frame, { role, mode, scopes, authField, authValue });
+          this.#handleFrame(frame, { role, mode, scopes, authField, authValue, clientIdOverride });
         } catch (err) {
           this.#logger?.error("Failed to parse gateway frame", { error: err.message });
         }
@@ -174,12 +169,13 @@ export class GatewayConnection extends EventEmitter {
     }
   }
 
-  #sendConnectRequest(nonce, { role, mode, scopes, authField, authValue }) {
+  #sendConnectRequest(nonce, { role, mode, scopes, authField, authValue, clientIdOverride }) {
+    const clientId = clientIdOverride ?? CLIENT_DESCRIPTOR.id;
     const deviceID = computeDeviceID(this.#identity.publicKey);
     const signedAtMilliseconds = Date.now();
     const signaturePayload = buildSignaturePayloadV3({
       deviceID,
-      clientID: CLIENT_DESCRIPTOR.id,
+      clientID: clientId,
       clientMode: mode,
       role,
       scopes,
@@ -203,7 +199,7 @@ export class GatewayConnection extends EventEmitter {
         minProtocol: 3,
         maxProtocol: 3,
         client: {
-          id: CLIENT_DESCRIPTOR.id,
+          id: clientId,
           version: CLIENT_DESCRIPTOR.version,
           platform: CLIENT_DESCRIPTOR.platform,
           mode,
@@ -304,8 +300,8 @@ export class GatewayConnection extends EventEmitter {
 
   async reconnect() {
     if (this.#reconnectTimer) return;
-    if (!this.#identity.deviceToken) {
-      this.#logger?.error("Cannot reconnect: no stored device token");
+    if (!this.#identity.deviceToken && !this.#bootstrapToken) {
+      this.#logger?.error("Cannot reconnect: no stored device token or bootstrap token");
       return;
     }
 
@@ -326,7 +322,7 @@ export class GatewayConnection extends EventEmitter {
     this.#reconnectTimer = null;
 
     try {
-      await this.#connectAsOperator();
+      await this.connect();
     } catch (err) {
       this.#logger?.error("Reconnect failed", { error: err.message });
       this.emit("error", err);
@@ -368,22 +364,49 @@ export class GatewayConnection extends EventEmitter {
   }
 
   #extractDeviceToken(helloPayload, targetRole) {
-    // Check primary auth token.
     const auth = helloPayload?.auth;
-    if (auth?.role === targetRole && auth?.deviceToken) {
+    if (!auth) return null;
+
+    // Prefer a token explicitly issued for the target role.
+    if (auth.role === targetRole && auth.deviceToken) {
       return auth.deviceToken;
     }
+    const tokens = Array.isArray(auth.deviceTokens) ? auth.deviceTokens : [];
+    for (const t of tokens) {
+      if (t.role === targetRole && t.deviceToken) {
+        return t.deviceToken;
+      }
+    }
 
-    // Check additional tokens array.
-    const tokens = auth?.deviceTokens;
-    if (Array.isArray(tokens)) {
-      for (const t of tokens) {
-        if (t.role === targetRole && t.deviceToken) {
-          return t.deviceToken;
-        }
+    // Fallback: openclaw appears to issue a single device token per device,
+    // not per role. Use whichever token is present; the gateway will enforce
+    // role and scopes on the next connect.
+    if (auth.deviceToken) {
+      return auth.deviceToken;
+    }
+    for (const t of tokens) {
+      if (t.deviceToken) {
+        return t.deviceToken;
       }
     }
 
     return null;
   }
+}
+
+function shapeOf(value, depth = 0) {
+  if (depth > 3 || value === null || value === undefined) {
+    return value === undefined ? "undefined" : value === null ? "null" : "...";
+  }
+  if (Array.isArray(value)) {
+    return value.length === 0 ? "array(empty)" : `array[${value.length}](${shapeOf(value[0], depth + 1)})`;
+  }
+  if (typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      out[key] = shapeOf(value[key], depth + 1);
+    }
+    return out;
+  }
+  return typeof value;
 }
