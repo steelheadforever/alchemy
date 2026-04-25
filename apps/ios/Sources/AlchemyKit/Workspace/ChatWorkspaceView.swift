@@ -15,7 +15,7 @@ public struct ChatWorkspaceView: View {
         }
     }
 
-    // MARK: - Sidebar (unchanged — polish is a separate pass)
+    // MARK: - Sidebar
 
     private var sidebar: some View {
         List(selection: Binding(
@@ -25,99 +25,112 @@ public struct ChatWorkspaceView: View {
                     let id = newValue,
                     let channel = model.channels.first(where: { $0.id == id })
                 else { return }
-                model.selectChannel(channel)
+                Task { await model.selectChannel(channel) }
             }
         )) {
-            Section("Agents") {
+            Section {
+                ForEach(model.channels) { channel in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(color(for: channel.status))
+                            .frame(width: 6, height: 6)
+
+                        Text(channel.displayName)
+                            .font(.callout)
+                            .lineLimit(1)
+                    }
+                    .tag(channel.id)
+                }
+            } header: {
+                Text("Channels")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 if model.isLoadingAgents {
-                    ProgressView("Loading agents...")
-                } else if model.availableAgents.isEmpty {
-                    Text("No agents loaded")
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     ForEach(model.availableAgents) { agent in
                         Button {
                             Task { await model.createChannel(for: agent) }
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(AlchemyTheme.accent.opacity(0.3))
+                                    .frame(width: 6, height: 6)
                                 Text(agent.title)
-                                if let subtitle = agent.subtitle {
-                                    Text(subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
+                                    .font(.callout)
                             }
                         }
                     }
                 }
+            } header: {
+                Text("Agents")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Channels") {
-                ForEach(model.channels) { channel in
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(color(for: channel.status))
-                            .frame(width: 8, height: 8)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(channel.title)
-                            Text(channel.sessionKey)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .tag(channel.id)
-                }
-            }
-
-            Section("Connection") {
-                HStack(spacing: 8) {
+            Section {
+                HStack(spacing: 6) {
                     Circle()
                         .fill(connectionColor)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 6, height: 6)
                     Text(connectionLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     if model.connectionState == .connecting {
                         Spacer()
                         ProgressView()
-                            .controlSize(.small)
+                            .controlSize(.mini)
                     }
                 }
 
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.red)
                 }
 
                 Button(role: .destructive) {
                     Task { await model.unpair() }
                 } label: {
-                    Label("Disconnect", systemImage: "xmark.circle")
+                    Text("Disconnect")
+                        .font(.caption)
                 }
             }
         }
-        .navigationTitle("Channels")
+        .listStyle(.sidebar)
+        .navigationTitle("alchemy")
         .toolbar {
-            ToolbarItem(placement: .secondaryAction) {
-                Button {
-                    Task {
-                        await model.refreshAgents()
-                        await model.refreshChannels()
-                    }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(!model.isConnected)
-            }
-
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await model.createChannel(for: model.availableAgents.first) }
+                Menu {
+                    Button {
+                        Task { await model.createChannel(for: model.availableAgents.first) }
+                    } label: {
+                        Label("New Channel", systemImage: "plus")
+                    }
+                    .disabled(!model.isConnected || model.availableAgents.isEmpty)
+
+                    Button {
+                        Task {
+                            await model.refreshAgents()
+                            await model.refreshChannels()
+                        }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!model.isConnected)
                 } label: {
-                    Label("Add Channel", systemImage: "plus")
+                    Image(systemName: "plus")
+                        .font(.callout.weight(.medium))
                 }
-                .disabled(!model.isConnected || model.availableAgents.isEmpty)
             }
         }
     }
@@ -133,20 +146,30 @@ public struct ChatWorkspaceView: View {
                 onSend: { Task { await model.sendDraft(in: channel) } },
                 onAction: { action in Task { await model.perform(action, in: channel) } }
             )
-            .navigationTitle(channel.title)
+            .navigationTitle(channel.displayName)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
         } else {
-            ContentUnavailableView(
-                "No Channel Selected",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Create a channel for an agent from the left sidebar.")
-            )
+            ZStack {
+                AlchemyTheme.surfacePrimary
+                    .ignoresSafeArea()
+                VStack(spacing: 8) {
+                    Text(">")
+                        .font(.title.monospaced().weight(.bold))
+                        .foregroundStyle(AlchemyTheme.accent.opacity(0.3))
+                    Text("Select or create a channel")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
     private var connectionColor: Color {
         switch model.connectionState {
         case .connected: return .green
-        case .connecting: return .orange
+        case .connecting: return AlchemyTheme.accent
         case .disconnected, .unknown: return .red
         }
     }
@@ -163,7 +186,7 @@ public struct ChatWorkspaceView: View {
     private func color(for status: WorkspaceChannel.Status) -> Color {
         switch status {
         case .idle: return .secondary
-        case .connecting: return .orange
+        case .connecting: return AlchemyTheme.accent
         case .live: return .green
         case .error: return .red
         }
@@ -178,6 +201,8 @@ private struct ChannelChatView: View {
     let onSend: @MainActor () -> Void
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
+    @State private var scrollTask: Task<Void, Never>?
+
     private var pendingApproval: ChannelApprovalPrompt? {
         channel.timeline.lazy.compactMap { item in
             guard case .approval(let prompt) = item.kind,
@@ -190,19 +215,24 @@ private struct ChannelChatView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
+                    LazyVStack(alignment: .leading, spacing: AlchemyTheme.feedSpacing) {
                         ForEach(channel.timeline) { item in
                             TimelineItemView(item: item, onAction: onAction)
                                 .id(item.id)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
                 .onChange(of: channel.timeline.count) { _, _ in
-                    if let last = channel.timeline.last {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last.id, anchor: .bottom)
+                    scrollTask?.cancel()
+                    scrollTask = Task {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        guard !Task.isCancelled else { return }
+                        if let last = channel.timeline.last {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
@@ -213,7 +243,7 @@ private struct ChannelChatView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            InputCapsule(
+            InputBar(
                 placeholder: "Message",
                 text: .init(
                     get: { channel.draftMessage },
@@ -236,7 +266,7 @@ private struct TimelineItemView: View {
     var body: some View {
         switch item.kind {
         case .message(let message):
-            MessageBubbleView(message: message)
+            MessageView(message: message)
         case .tool(let tool):
             ToolActivityView(tool: tool)
         case .approval(let approval):
@@ -247,9 +277,9 @@ private struct TimelineItemView: View {
     }
 }
 
-// MARK: - Messages (asymmetric layout)
+// MARK: - Messages
 
-private struct MessageBubbleView: View {
+private struct MessageView: View {
     let message: ChannelMessage
 
     var body: some View {
@@ -259,49 +289,43 @@ private struct MessageBubbleView: View {
                 Spacer(minLength: 60)
                 Text(message.text)
                     .font(.callout)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .background(
-                        Color.blue.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        AlchemyTheme.surfaceTertiary,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                     )
             }
 
         case .assistant:
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.secondary.opacity(0.08), in: Circle())
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(">")
+                    .font(.callout.monospaced().weight(.bold))
+                    .foregroundStyle(AlchemyTheme.accent)
 
                 TypewriterText(text: message.text, isStreaming: message.isStreaming)
                     .font(.callout)
 
-                Spacer(minLength: 20)
+                Spacer(minLength: 0)
             }
 
         case .system:
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 4) {
                 Text(message.text)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
 }
 
-// MARK: - Typewriter + Blinking Cursor
+// MARK: - Typewriter
 
 private struct TypewriterText: View {
     let text: String
     let isStreaming: Bool
 
     @State private var revealedCount = 0
-    @State private var cursorVisible = true
 
     var body: some View {
         let displayText: String = if !isStreaming {
@@ -312,59 +336,39 @@ private struct TypewriterText: View {
             String(text.prefix(revealedCount))
         }
 
-        HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text(displayText)
-                .textSelection(.enabled)
-
-            if isStreaming {
-                Text("\u{258E}")
-                    .foregroundStyle(.secondary)
-                    .opacity(cursorVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.4), value: cursorVisible)
-                    .task {
-                        while !Task.isCancelled {
-                            try? await Task.sleep(for: .milliseconds(530))
-                            cursorVisible.toggle()
-                        }
-                    }
+        Text(displayText)
+            .textSelection(.enabled)
+            .task(id: isStreaming ? text.count : -1) {
+                guard isStreaming, revealedCount < text.count else { return }
+                while revealedCount < text.count {
+                    let pending = text.count - revealedCount
+                    let step = max(1, pending / 6)
+                    revealedCount = min(revealedCount + step, text.count)
+                    try? await Task.sleep(for: .milliseconds(16))
+                    guard !Task.isCancelled else { return }
+                }
             }
-        }
-        .task(id: isStreaming ? text.count : -1) {
-            guard isStreaming, revealedCount < text.count else { return }
-            while revealedCount < text.count {
-                let pending = text.count - revealedCount
-                let step = max(1, pending / 6)
-                revealedCount = min(revealedCount + step, text.count)
-                try? await Task.sleep(for: .milliseconds(16))
-                guard !Task.isCancelled else { return }
+            .onChange(of: isStreaming) { _, streaming in
+                if !streaming {
+                    revealedCount = text.count
+                }
             }
-        }
-        .onChange(of: isStreaming) { _, streaming in
-            if !streaming {
-                revealedCount = text.count
-                cursorVisible = true
-            }
-        }
     }
 }
 
-// MARK: - Tool Activity (compact chip)
+// MARK: - Tool Activity
 
 private struct ToolActivityView: View {
     let tool: ChannelToolActivity
 
     var body: some View {
         HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(tool.isStreaming ? Color.orange : Color.green)
-                .frame(width: 3)
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(tool.isStreaming ? AlchemyTheme.accent : .green)
+                .frame(width: 2)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
                     Text(tool.title)
                         .font(.caption.weight(.medium))
 
@@ -392,54 +396,54 @@ private struct ToolActivityView: View {
                 }
             }
             .padding(.leading, 8)
-            .padding(.vertical, 6)
-            .padding(.trailing, 10)
+            .padding(.vertical, 4)
+            .padding(.trailing, 8)
         }
-        .padding(.leading, 34)
+        .padding(.leading, AlchemyTheme.agentIndent)
     }
 }
 
-// MARK: - Approval Context (inline, no buttons)
+// MARK: - Approval Context
 
 private struct ApprovalContextView: View {
     let prompt: ChannelApprovalPrompt
 
     var body: some View {
         HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(.orange)
-                .frame(width: 3)
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(AlchemyTheme.accent)
+                .frame(width: 2)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Label(
                     prompt.title,
                     systemImage: prompt.kind == .exec
                         ? "shield.lefthalf.filled"
                         : "puzzlepiece.extension"
                 )
-                .font(.subheadline.weight(.medium))
+                .font(.caption.weight(.medium))
 
                 if let detail = prompt.detail {
                     Text(detail)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
                 }
 
                 if prompt.resolvedChoiceID != nil {
                     Label("Resolved", systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.medium))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.green)
                 }
             }
-            .padding(.leading, 10)
-            .padding(.vertical, 6)
+            .padding(.leading, 8)
+            .padding(.vertical, 4)
         }
-        .padding(.leading, 34)
+        .padding(.leading, AlchemyTheme.agentIndent)
     }
 }
 
-// MARK: - Approval Footer (pinned above input, thumb-friendly)
+// MARK: - Approval Footer
 
 private struct ApprovalFooterBar: View {
     let prompt: ChannelApprovalPrompt
@@ -450,7 +454,7 @@ private struct ApprovalFooterBar: View {
             Image(systemName: prompt.kind == .exec
                 ? "shield.lefthalf.filled"
                 : "puzzlepiece.extension")
-                .foregroundStyle(.orange)
+                .foregroundStyle(AlchemyTheme.accent)
                 .font(.subheadline)
 
             Text(prompt.title)
@@ -479,9 +483,9 @@ private struct ApprovalFooterBar: View {
                 .controlSize(.small)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.orange.opacity(0.08))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AlchemyTheme.accent.opacity(0.08))
     }
 }
 
@@ -492,13 +496,13 @@ private struct OptionPromptView: View {
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(prompt.title)
-                .font(.subheadline.weight(.medium))
+                .font(.caption.weight(.medium))
 
             if let detail = prompt.detail {
                 Text(detail)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
@@ -512,13 +516,13 @@ private struct OptionPromptView: View {
                 }
             }
         }
-        .padding(.leading, 34)
+        .padding(.leading, AlchemyTheme.agentIndent)
     }
 }
 
-// MARK: - Input Capsule
+// MARK: - Input Bar
 
-private struct InputCapsule: View {
+private struct InputBar: View {
     let placeholder: String
     @Binding var text: String
     let isDisabled: Bool
@@ -532,30 +536,29 @@ private struct InputCapsule: View {
         HStack(alignment: .bottom, spacing: 0) {
             TextField(placeholder, text: $text, axis: .vertical)
                 .lineLimit(1...6)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.title2)
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(canSend ? .blue : .secondary)
+                    .foregroundStyle(canSend ? AlchemyTheme.accent : .secondary)
             }
             .disabled(!canSend)
             .padding(.trailing, 8)
-            .padding(.bottom, 6)
+            .padding(.bottom, 5)
         }
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.regularMaterial)
-                .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
         )
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 }
 

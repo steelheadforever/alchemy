@@ -26,6 +26,7 @@ public final class ChatWorkspaceViewModel {
     private var operatorConfiguration: GatewayConnectionConfiguration?
     private var isBackgrounded = false
     private var reconnectTask: Task<Void, Never>?
+    private var subscribedSessionKeys: Set<String> = []
 
     public init(gateway: GatewayClient = GatewayClient()) {
         self.gateway = gateway
@@ -186,12 +187,14 @@ public final class ChatWorkspaceViewModel {
         reconnectTask = nil
         eventTask?.cancel()
         eventTask = nil
+        subscribedSessionKeys.removeAll()
         await gateway.disconnect()
         connectionState = .disconnected
         selectedChannelID = nil
     }
 
     public func reconnectIfPossible() async {
+        subscribedSessionKeys.removeAll()
         guard let url = Self.loadGatewayURL() else {
             connectionState = .disconnected
             return
@@ -225,6 +228,7 @@ public final class ChatWorkspaceViewModel {
         reconnectTask = nil
         eventTask?.cancel()
         eventTask = nil
+        subscribedSessionKeys.removeAll()
         await gateway.disconnect()
     }
 
@@ -242,6 +246,7 @@ public final class ChatWorkspaceViewModel {
         reconnectTask = nil
         eventTask?.cancel()
         eventTask = nil
+        subscribedSessionKeys.removeAll()
         await gateway.disconnect()
 
         Self.clearGatewayURL()
@@ -258,6 +263,7 @@ public final class ChatWorkspaceViewModel {
     }
 
     private func attemptReconnectWithBackoff() async {
+        subscribedSessionKeys.removeAll()
         let delays: [UInt64] = [1, 2, 4, 8, 16]
 
         for (attempt, delaySec) in delays.enumerated() {
@@ -320,10 +326,6 @@ public final class ChatWorkspaceViewModel {
             let parsed = GatewayWorkspaceParsing.parseChannels(payload)
             print("Alchemy Workspace: loaded channels count=\(parsed.count)")
 
-            for channel in parsed {
-                _ = try? await gateway.subscribeSessionMessages(key: channel.sessionKey)
-            }
-
             channels = parsed.map { incoming in
                 guard let existing = existingChannels.first(where: { $0.sessionKey == incoming.sessionKey }) else {
                     return incoming
@@ -343,6 +345,10 @@ public final class ChatWorkspaceViewModel {
                 selectedChannelID = Self.loadSelectedSessionKey().flatMap { key in
                     channels.first(where: { $0.sessionKey == key })?.id
                 } ?? channels.first?.id
+            }
+
+            if let selected = selectedChannel {
+                await ensureSubscribed(selected.sessionKey)
             }
         } catch {
             errorMessage = "Could not load sessions: \(error.localizedDescription)"
@@ -376,7 +382,7 @@ public final class ChatWorkspaceViewModel {
                 return
             }
 
-            _ = try await gateway.subscribeSessionMessages(key: sessionKey)
+            await ensureSubscribed(sessionKey)
             print("Alchemy Workspace: created and subscribed session=\(sessionKey)")
 
             let channel = WorkspaceChannel(
@@ -406,15 +412,26 @@ public final class ChatWorkspaceViewModel {
             return false
         }
 
-        _ = try? await gateway.subscribeSessionMessages(key: existing.sessionKey)
+        await ensureSubscribed(existing.sessionKey)
         selectChannelID(existing.id)
         errorMessage = nil
         print("Alchemy Workspace: selected existing channel session=\(existing.sessionKey)")
         return true
     }
 
-    public func selectChannel(_ channel: WorkspaceChannel) {
+    public func selectChannel(_ channel: WorkspaceChannel) async {
         selectChannelID(channel.id)
+        await ensureSubscribed(channel.sessionKey)
+    }
+
+    private func ensureSubscribed(_ sessionKey: String) async {
+        guard isConnected, !subscribedSessionKeys.contains(sessionKey) else { return }
+        do {
+            _ = try await gateway.subscribeSessionMessages(key: sessionKey)
+            subscribedSessionKeys.insert(sessionKey)
+        } catch {
+            print("Alchemy Workspace: subscribe failed session=\(sessionKey)")
+        }
     }
 
     public func updateDraft(_ text: String, for channelID: WorkspaceChannel.ID) {

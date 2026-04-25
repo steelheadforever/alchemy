@@ -40,6 +40,10 @@ public struct WorkspaceChannel: Identifiable, Equatable, Sendable {
     public var timeline: [ChannelTimelineItem]
     public var draftMessage: String
 
+    public var displayName: String {
+        title.hasPrefix("# ") ? String(title.dropFirst(2)) : title
+    }
+
     public init(
         sessionKey: String,
         title: String,
