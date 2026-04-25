@@ -4,7 +4,8 @@
   "description": "QR pairing helper for OpenClaw mobile onboarding.",
   "type": "module",
   "bin": {
-    "openclaw-qr-pair": "./src/cli.js"
+    "openclaw-qr-pair": "./src/cli.js",
+    "openclaw-node-prune": "./src/prune-cli.js"
   },
   "engines": {
     "node": ">=24"

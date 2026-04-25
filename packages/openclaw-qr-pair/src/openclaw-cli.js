@@ -50,6 +50,11 @@ export class OpenClawCli {
     return JSON.parse(output);
   }
 
+  async removeDevice(deviceId) {
+    const output = await this.#retryJsonCommand(["devices", "remove", deviceId, "--json"]);
+    return JSON.parse(output);
+  }
+
   async #retryJsonCommand(args, attempts = 3) {
     let lastError;
 

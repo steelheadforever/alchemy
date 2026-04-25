@@ -153,3 +153,34 @@ function getCreatedAtMs(request) {
   const parsed = Date.parse(rawValue);
   return Number.isNaN(parsed) ? null : parsed;
 }
+
+export function getDeviceCreatedAtMs(device) {
+  return (
+    pickNumber(device?.approvedAtMs) ??
+    pickNumber(device?.createdAtMs) ??
+    null
+  );
+}
+
+export function getDeviceLastUsedMs(device) {
+  const tokens = Array.isArray(device?.tokens) ? device.tokens : [];
+  let latest = null;
+  for (const token of tokens) {
+    const ts = pickNumber(token?.lastUsedAtMs);
+    if (ts !== null && (latest === null || ts > latest)) {
+      latest = ts;
+    }
+  }
+  return latest;
+}
+
+export function getDeviceStalenessAnchorMs(device) {
+  return getDeviceLastUsedMs(device) ?? getDeviceCreatedAtMs(device);
+}
+
+function pickNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value;
+}

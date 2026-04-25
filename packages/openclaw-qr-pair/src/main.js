@@ -13,6 +13,7 @@ import {
 } from "./pending-requests.js";
 import { decodeSetupCode, encodeSetupCode } from "./setup-code.js";
 import { DiagnosticLogger } from "./logger.js";
+import { runPreflight } from "./preflight.js";
 import { Sidecar } from "./sidecar.js";
 
 export async function main(argv) {
@@ -36,9 +37,7 @@ export async function main(argv) {
     hostname: os.hostname(),
   });
 
-  await openclaw.checkInstalled();
-  const gatewayProbe = await openclaw.probeGateway();
-  logger.info("Gateway probe succeeded", { gatewayProbe });
+  await runPreflight({ openclaw, options, logger });
 
   // Step 1: Resolve gateway address and generate setup code.
   // The sidecar pairs with the gateway (not the phone).
