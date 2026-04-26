@@ -123,7 +123,7 @@ export class GatewayConnection extends EventEmitter {
   async #connectAsOperator(token, authField) {
     const hello = await this.#connectWithRole({
       role: "operator",
-      mode: "operator",
+      mode: "node",
       scopes: OPERATOR_SCOPES,
       authField,
       authValue: token,
