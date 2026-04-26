@@ -5,6 +5,7 @@ import { PhoneServer } from "./sidecar-phone.js";
 
 export class Sidecar {
   #gatewayUrl;
+  #gatewayToken;
   #bootstrapToken;
   #sidecarPort;
   #logger;
@@ -13,8 +14,9 @@ export class Sidecar {
   #buffer;
   #subscribedSessions = new Set();
 
-  constructor({ gatewayUrl, bootstrapToken, sidecarPort, logger }) {
+  constructor({ gatewayUrl, gatewayToken, bootstrapToken, sidecarPort, logger }) {
     this.#gatewayUrl = gatewayUrl;
+    this.#gatewayToken = gatewayToken;
     this.#bootstrapToken = bootstrapToken;
     this.#sidecarPort = sidecarPort;
     this.#logger = logger;
@@ -26,7 +28,7 @@ export class Sidecar {
     this.#gateway = new GatewayConnection({
       gatewayUrl: this.#gatewayUrl,
       identity,
-      bootstrapToken: this.#bootstrapToken,
+      gatewayToken: this.#gatewayToken,
       logger: this.#logger,
     });
 

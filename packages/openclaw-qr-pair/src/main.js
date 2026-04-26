@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import qrcode from "qrcode-terminal";
 
@@ -31,7 +32,12 @@ export async function main(argv) {
     hostname: os.hostname(),
   });
 
-  const { tailscaleBin } = await runPreflight({ openclaw, options, logger });
+  const { probe, tailscaleBin } = await runPreflight({ openclaw, options, logger });
+
+  // Read gateway auth token from config. The sidecar runs on the same host as
+  // the gateway, so it can use the gateway's own auth token to connect as
+  // operator directly — no bootstrap/device-token dance needed.
+  const gatewayToken = readGatewayToken(probe, logger);
 
   // Step 1: Resolve gateway address and generate setup code.
   // The sidecar pairs with the gateway (not the phone).
@@ -58,6 +64,7 @@ export async function main(argv) {
   const sidecarGatewayUrl = `ws://127.0.0.1:${options.port}`;
   const sidecar = new Sidecar({
     gatewayUrl: sidecarGatewayUrl,
+    gatewayToken,
     bootstrapToken,
     sidecarPort: options.sidecarPort,
     logger,
@@ -82,10 +89,9 @@ export async function main(argv) {
   console.log("");
   console.log("Connecting sidecar to gateway...");
 
-  // Step 3: Connect sidecar to gateway. Two-phase auth:
-  //   Phase 1: bootstrap as node → receive device tokens for both roles
-  //   Phase 2: reconnect as operator → full access for forwarding phone requests
-  // On subsequent runs, skip phase 1 and use stored operator token.
+  // Step 3: Connect sidecar to gateway as operator using the gateway's own
+  // auth token. Since the sidecar runs on the same host, it can read the token
+  // from the openclaw config and connect directly — no bootstrap dance needed.
   await sidecar.connectToGateway();
   console.log("Sidecar connected to gateway (operator role).");
 
@@ -173,6 +179,29 @@ function registerServeRestoreHooks(serveManager, logger) {
     restore();
   });
   return true;
+}
+
+function readGatewayToken(probe, logger) {
+  const configPath = probe?.targets?.[0]?.config?.path;
+  if (!configPath) {
+    throw new Error("Cannot determine openclaw config path from gateway probe");
+  }
+
+  let raw;
+  try {
+    raw = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    throw new Error(`Cannot read openclaw config at ${configPath}: ${err.message}`);
+  }
+
+  const config = JSON.parse(raw);
+  const token = config?.gateway?.auth?.token;
+  if (!token) {
+    throw new Error(`No gateway.auth.token found in ${configPath}`);
+  }
+
+  logger?.info("Read gateway auth token from config", { configPath });
+  return token;
 }
 
 function printNetworkInfo(networkChoice) {
