@@ -41,6 +41,7 @@ export class GatewayConnection extends EventEmitter {
   #reconnectTimer = null;
   #intentionalClose = false;
   #hello = null;
+  #connectGeneration = 0; // Incremented on each connect to prevent stale close handlers.
 
   constructor({ gatewayUrl, identity, bootstrapToken, logger }) {
     super();
@@ -59,45 +60,95 @@ export class GatewayConnection extends EventEmitter {
   }
 
   async connect() {
-    // Connect as node with the bootstrap token (or a previously stored device
-    // token if we have one from a prior session). The gateway accepts node-role
-    // connections for sessions.messages.subscribe and other forwarding methods,
-    // so we do NOT escalate to operator role: bootstrap-issued device tokens
-    // are bound to role=node and the gateway refuses operator promotion without
-    // an explicit device.token.rotate that we currently do not implement.
-    const useStoredToken = Boolean(this.#identity.deviceToken);
-    const authField = useStoredToken ? "deviceToken" : "bootstrapToken";
-    const authValue = useStoredToken ? this.#identity.deviceToken : this.#bootstrapToken;
-    this.#logger?.info("Gateway connect: connecting as node", {
-      auth: authField,
+    // Two-phase connect, mirroring the iOS GatewayClient flow:
+    //   Phase 1: connect as node with bootstrapToken → receive device tokens for both roles
+    //   Phase 2: reconnect as operator with operator device token → full access
+    //
+    // On reconnect (after initial pairing), skip phase 1 and use stored operator token.
+
+    if (this.#identity.operatorToken) {
+      // Fast path: reconnect as operator with stored token.
+      this.#logger?.info("Gateway connect: reconnecting as operator with stored token");
+      return this.#connectAsOperator(this.#identity.operatorToken, "deviceToken");
+    }
+
+    // Phase 1: bootstrap as node to get device tokens.
+    const useStoredNodeToken = Boolean(this.#identity.deviceToken);
+    const nodeAuthField = useStoredNodeToken ? "deviceToken" : "bootstrapToken";
+    const nodeAuthValue = useStoredNodeToken ? this.#identity.deviceToken : this.#bootstrapToken;
+    this.#logger?.info("Gateway connect: phase 1 — connecting as node", {
+      auth: nodeAuthField,
     });
 
-    const hello = await this.#connectWithRole({
+    const nodeHello = await this.#connectWithRole({
       role: "node",
       mode: "node",
       scopes: [],
-      authField,
-      authValue,
+      authField: nodeAuthField,
+      authValue: nodeAuthValue,
     });
 
-    // Persist the issued device token for reconnects.
-    const issued = this.#extractDeviceToken(hello, "node");
-    if (issued && issued !== this.#identity.deviceToken) {
-      this.#identity.deviceToken = issued;
+    // Extract and persist tokens for both roles.
+    const nodeToken = this.#extractDeviceToken(nodeHello, "node");
+    const operatorToken = this.#extractDeviceToken(nodeHello, "operator");
+    this.#logger?.info("Phase 1 complete, extracted tokens", {
+      hasNodeToken: Boolean(nodeToken),
+      hasOperatorToken: Boolean(operatorToken),
+    });
+
+    if (nodeToken && nodeToken !== this.#identity.deviceToken) {
+      this.#identity.deviceToken = nodeToken;
+    }
+    if (operatorToken) {
+      this.#identity.operatorToken = operatorToken;
+    }
+    saveIdentity(undefined, this.#identity);
+
+    if (!operatorToken) {
+      // Fallback: if no operator token issued, stay connected as node.
+      this.#logger?.warn("No operator token issued by gateway; staying as node");
+      this.#hello = nodeHello;
+      this.#reconnectAttempt = 0;
+      this.emit("connected", nodeHello);
+      return nodeHello;
+    }
+
+    // Phase 2: disconnect node, reconnect as operator.
+    this.#logger?.info("Gateway connect: phase 2 — disconnecting node, reconnecting as operator");
+    this.#closeWs();
+
+    return this.#connectAsOperator(operatorToken, "deviceToken");
+  }
+
+  async #connectAsOperator(token, authField) {
+    const hello = await this.#connectWithRole({
+      role: "operator",
+      mode: "operator",
+      scopes: OPERATOR_SCOPES,
+      authField,
+      authValue: token,
+    });
+
+    // Update stored operator token if gateway issued a new one.
+    const freshToken = this.#extractDeviceToken(hello, "operator");
+    if (freshToken && freshToken !== this.#identity.operatorToken) {
+      this.#identity.operatorToken = freshToken;
       saveIdentity(undefined, this.#identity);
-      this.#logger?.info("Stored device token from gateway hello");
+      this.#logger?.info("Updated stored operator token");
     }
 
     this.#hello = hello;
     this.#reconnectAttempt = 0;
     this.emit("connected", hello);
-    this.#logger?.info("Gateway connection established", {
+    this.#logger?.info("Gateway operator connection established", {
       connectionID: hello?.server?.connId,
     });
     return hello;
   }
 
   #connectWithRole({ role, mode, scopes, authField, authValue, clientIdOverride }) {
+    const generation = ++this.#connectGeneration;
+
     return new Promise((resolve, reject) => {
       this.#connectResolve = resolve;
       this.#connectReject = reject;
@@ -110,6 +161,7 @@ export class GatewayConnection extends EventEmitter {
       });
 
       this.#ws.on("message", (data) => {
+        if (generation !== this.#connectGeneration) return;
         try {
           const frame = JSON.parse(data.toString());
           this.#handleFrame(frame, { role, mode, scopes, authField, authValue, clientIdOverride });
@@ -119,6 +171,7 @@ export class GatewayConnection extends EventEmitter {
       });
 
       this.#ws.on("close", (code, reason) => {
+        if (generation !== this.#connectGeneration) return; // Stale handler from previous phase.
         this.#logger?.info("Gateway WebSocket closed", { code, reason: reason?.toString() });
         if (this.#connectReject) {
           this.#connectReject(new Error(`Gateway WebSocket closed during handshake: ${code}`));
@@ -133,6 +186,7 @@ export class GatewayConnection extends EventEmitter {
       });
 
       this.#ws.on("error", (err) => {
+        if (generation !== this.#connectGeneration) return;
         this.#logger?.error("Gateway WebSocket error", { error: err.message });
         if (this.#connectReject) {
           this.#connectReject(err);
@@ -300,8 +354,8 @@ export class GatewayConnection extends EventEmitter {
 
   async reconnect() {
     if (this.#reconnectTimer) return;
-    if (!this.#identity.deviceToken && !this.#bootstrapToken) {
-      this.#logger?.error("Cannot reconnect: no stored device token or bootstrap token");
+    if (!this.#identity.operatorToken && !this.#identity.deviceToken && !this.#bootstrapToken) {
+      this.#logger?.error("Cannot reconnect: no stored tokens or bootstrap token");
       return;
     }
 
@@ -325,6 +379,12 @@ export class GatewayConnection extends EventEmitter {
       await this.connect();
     } catch (err) {
       this.#logger?.error("Reconnect failed", { error: err.message });
+      // If operator token was rejected, clear it and retry from bootstrap.
+      if (this.#identity.operatorToken) {
+        this.#logger?.info("Clearing stored operator token, will retry from bootstrap");
+        this.#identity.operatorToken = null;
+        saveIdentity(undefined, this.#identity);
+      }
       this.emit("error", err);
       this.reconnect();
     }

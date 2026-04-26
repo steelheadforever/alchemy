@@ -16,6 +16,7 @@ export function loadOrGenerateIdentity(configDir = CONFIG_DIR) {
         seed: Buffer.from(data.seed, "hex"),
         publicKey: Buffer.from(data.publicKey, "hex"),
         deviceToken: data.deviceToken ?? null,
+        operatorToken: data.operatorToken ?? null,
       };
     }
   } catch {
@@ -32,7 +33,7 @@ export function loadOrGenerateIdentity(configDir = CONFIG_DIR) {
   // Extract raw 32-byte public key from SPKI DER (last 32 bytes).
   const publicKey = keypair.publicKey.subarray(keypair.publicKey.length - 32);
 
-  const identity = { seed, publicKey, deviceToken: null };
+  const identity = { seed, publicKey, deviceToken: null, operatorToken: null };
   saveIdentity(configDir, identity);
   return identity;
 }
@@ -46,6 +47,7 @@ export function saveIdentity(configDir = CONFIG_DIR, identity) {
       seed: identity.seed.toString("hex"),
       publicKey: identity.publicKey.toString("hex"),
       deviceToken: identity.deviceToken ?? null,
+      operatorToken: identity.operatorToken ?? null,
     }),
     "utf8",
   );

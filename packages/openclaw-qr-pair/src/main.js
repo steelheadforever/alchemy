@@ -82,13 +82,12 @@ export async function main(argv) {
   console.log("");
   console.log("Connecting sidecar to gateway...");
 
-  // Step 3: Connect sidecar to gateway. The sidecar handles its own auth
-  // (bootstrap token on first run, persisted deviceToken on reconnects). The
-  // gateway auto-approves node pairings, so no separate approval poll is
-  // needed — the old waitForAndApproveRequest path was for the pre-sidecar
-  // architecture where the phone paired with the gateway directly.
+  // Step 3: Connect sidecar to gateway. Two-phase auth:
+  //   Phase 1: bootstrap as node → receive device tokens for both roles
+  //   Phase 2: reconnect as operator → full access for forwarding phone requests
+  // On subsequent runs, skip phase 1 and use stored operator token.
   await sidecar.connectToGateway();
-  console.log("Sidecar connected to gateway.");
+  console.log("Sidecar connected to gateway (operator role).");
 
   // Step 4: Start the phone-facing server on the sidecar port.
   await sidecar.startPhoneServer();
