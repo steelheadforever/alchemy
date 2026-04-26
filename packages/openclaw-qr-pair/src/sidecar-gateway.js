@@ -70,7 +70,7 @@ export class GatewayConnection extends EventEmitter {
       // Fast path: reconnect as operator with stored token.
       this.#logger?.info("Gateway connect: reconnecting as operator with stored token");
       try {
-        return await this.#connectAsOperator(this.#identity.operatorToken, "deviceToken");
+        return await this.#connectAsOperator(this.#identity.operatorToken, "token");
       } catch (err) {
         // Stale token — clear it and fall through to full two-phase bootstrap.
         this.#logger?.warn("Stored operator token rejected, falling back to bootstrap", {
@@ -127,7 +127,7 @@ export class GatewayConnection extends EventEmitter {
     this.#logger?.info("Gateway connect: phase 2 — disconnecting node, reconnecting as operator");
     this.#closeWs();
 
-    return this.#connectAsOperator(operatorToken, "deviceToken");
+    return this.#connectAsOperator(operatorToken, "token");
   }
 
   async #connectAsOperator(token, authField) {
