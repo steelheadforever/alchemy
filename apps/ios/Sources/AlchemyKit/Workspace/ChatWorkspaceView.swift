@@ -544,13 +544,13 @@ private struct InputBar: View {
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
+                    .font(.title)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(canSend ? AlchemyTheme.accent : .secondary)
             }
             .disabled(!canSend)
             .padding(.trailing, 8)
-            .padding(.bottom, 5)
+            .padding(.bottom, 4)
         }
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)

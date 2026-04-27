@@ -13,6 +13,6 @@ public enum AlchemyTheme {
 
     // MARK: - Spacing
 
-    public static let feedSpacing: CGFloat = 4
+    public static let feedSpacing: CGFloat = 12
     public static let agentIndent: CGFloat = 20
 }
