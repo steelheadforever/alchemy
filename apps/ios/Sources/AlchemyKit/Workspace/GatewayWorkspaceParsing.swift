@@ -164,7 +164,7 @@ enum GatewayWorkspaceParsing {
             return nil
         }
 
-        let runID = payload?["runId"]?.stringValue ?? sessionKey
+        let runID = payload?["runId"]?.stringValue ?? UUID().uuidString.lowercased()
         let isStreaming = payload?["data"]?["done"]?.boolValue != true
 
         let item = ChannelTimelineItem(

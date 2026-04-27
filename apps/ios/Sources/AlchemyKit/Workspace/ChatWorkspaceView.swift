@@ -205,6 +205,7 @@ private struct ChannelChatView: View {
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     @State private var scrollTask: Task<Void, Never>?
+    @State private var autoScrollEnabled = true
 
     private var pendingApproval: ChannelApprovalPrompt? {
         channel.timeline.lazy.compactMap { item in
@@ -214,26 +215,67 @@ private struct ChannelChatView: View {
         }.first
     }
 
+    private enum SenderGroup {
+        case user, assistant
+    }
+
+    private func senderGroup(of item: ChannelTimelineItem) -> SenderGroup {
+        switch item.kind {
+        case .message(let msg):
+            return msg.role == .user ? .user : .assistant
+        case .tool, .approval, .options:
+            return .assistant
+        }
+    }
+
+    /// Changes whenever the last timeline item's content grows (streaming text) or a new item appears.
+    private var scrollTrigger: String {
+        let count = channel.timeline.count
+        guard let last = channel.timeline.last else { return "0" }
+        switch last.kind {
+        case .message(let msg):
+            return "\(count):\(msg.text.count)"
+        default:
+            return "\(count)"
+        }
+    }
+
+    private func topPadding(for item: ChannelTimelineItem, at offset: Int) -> CGFloat {
+        guard offset > 0 else { return 0 }
+        let previous = channel.timeline[offset - 1]
+        if senderGroup(of: previous) == senderGroup(of: item) {
+            return AlchemyTheme.sameSenderSpacing
+        }
+        return AlchemyTheme.turnSpacing
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AlchemyTheme.feedSpacing) {
-                        ForEach(channel.timeline) { item in
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(channel.timeline.enumerated()), id: \.element.id) { offset, item in
                             TimelineItemView(item: item, onAction: onAction)
                                 .id(item.id)
+                                .padding(.top, topPadding(for: item, at: offset))
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                 }
-                .onChange(of: channel.timeline.count) { _, _ in
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 5).onChanged { _ in
+                        autoScrollEnabled = false
+                    }
+                )
+                .onChange(of: scrollTrigger) { _, _ in
+                    guard autoScrollEnabled else { return }
                     scrollTask?.cancel()
                     scrollTask = Task {
-                        try? await Task.sleep(for: .milliseconds(100))
+                        try? await Task.sleep(for: .milliseconds(50))
                         guard !Task.isCancelled else { return }
                         if let last = channel.timeline.last {
-                            withAnimation(.easeOut(duration: 0.2)) {
+                            withAnimation(.easeOut(duration: 0.15)) {
                                 proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
@@ -253,7 +295,10 @@ private struct ChannelChatView: View {
                     set: { onDraftChanged($0) }
                 ),
                 isDisabled: channel.status == .connecting,
-                onSend: onSend
+                onSend: {
+                    autoScrollEnabled = true
+                    onSend()
+                }
             )
         }
         .animation(.easeInOut(duration: 0.25), value: pendingApproval?.id)

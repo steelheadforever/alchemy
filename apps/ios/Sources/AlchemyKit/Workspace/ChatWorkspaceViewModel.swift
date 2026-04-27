@@ -541,12 +541,13 @@ public final class ChatWorkspaceViewModel {
             return
         }
 
+        let placeholderID = "placeholder:\(UUID().uuidString.lowercased())"
         channels[index].timeline.append(
             ChannelTimelineItem(
-                id: "placeholder:\(channelID)",
+                id: placeholderID,
                 kind: .message(
                     ChannelMessage(
-                        id: "placeholder:\(channelID)",
+                        id: placeholderID,
                         role: .assistant,
                         text: "",
                         isStreaming: true
@@ -561,7 +562,9 @@ public final class ChatWorkspaceViewModel {
             return
         }
 
-        channels[index].timeline.removeAll { $0.id == "placeholder:\(channelID)" }
+        if let lastPlaceholder = channels[index].timeline.lastIndex(where: { $0.id.hasPrefix("placeholder:") }) {
+            channels[index].timeline.remove(at: lastPlaceholder)
+        }
     }
 
     private func markChannel(_ channelID: WorkspaceChannel.ID, status: WorkspaceChannel.Status) {
@@ -652,7 +655,14 @@ public final class ChatWorkspaceViewModel {
 
         channel.timeline.append(item)
 
-        // Post-append cleanup: remove earlier blank or duplicate messages
+        // When a real assistant message arrives, clean up any leftover placeholders.
+        if case .message(let msg) = item.kind,
+           msg.role == .assistant,
+           !item.id.hasPrefix("placeholder:") {
+            channel.timeline.removeAll { $0.id.hasPrefix("placeholder:") }
+        }
+
+        // Post-append cleanup: remove earlier blank placeholder or duplicate messages
         // that slipped past the pre-checks (e.g. non-streaming events with
         // different IDs arriving before text overlap could catch them).
         if case .message(let msg) = item.kind, !msg.text.isEmpty {
@@ -661,7 +671,8 @@ public final class ChatWorkspaceViewModel {
             for i in stride(from: appendedIndex - 1, through: scanStart, by: -1) {
                 guard case .message(let earlier) = channel.timeline[i].kind else { continue }
                 guard earlier.role == msg.role else { continue }
-                if earlier.text.isEmpty || textsOverlap(earlier.text, msg.text) {
+                if (earlier.text.isEmpty && channel.timeline[i].id.hasPrefix("placeholder:"))
+                    || textsOverlap(earlier.text, msg.text) {
                     channel.timeline.remove(at: i)
                     break
                 }
@@ -716,8 +727,10 @@ public final class ChatWorkspaceViewModel {
                 return true
             }
             // During streaming, an empty text on either side is a duplicate start/placeholder
-            // from a parallel event channel (session.message / agent / chat)
-            if existing.isStreaming || incoming.isStreaming {
+            // from a parallel event channel (session.message / agent / chat).
+            // Require BOTH sides to be streaming so a completed first-turn response
+            // never matches a new incoming empty streaming message.
+            if existing.isStreaming && incoming.isStreaming {
                 return existing.text.isEmpty || incoming.text.isEmpty
             }
             return false
