@@ -152,7 +152,6 @@ public actor GatewayClient {
         }
 
         let requestID = UUID().uuidString.lowercased()
-        print("Alchemy Gateway request: method=\(method) id=\(requestID)")
         let frame = JSONValue.object([
             "type": .string("req"),
             "id": .string(requestID),
@@ -284,11 +283,9 @@ public actor GatewayClient {
         }
 
         if ok {
-            print("Alchemy Gateway response ok: id=\(requestID)")
             resumePendingResponse(id: requestID, result: .success(object["payload"] ?? .null))
         } else {
             let error = parseResponseError(object["error"])
-            print("Alchemy Gateway response error: id=\(requestID) code=\(error.code) message=\(error.message)")
             resumePendingResponse(id: requestID, result: .failure(error))
         }
     }
@@ -387,14 +384,6 @@ public actor GatewayClient {
             params["userAgent"] = .string(userAgent)
         }
 
-        print(
-            """
-            Alchemy Gateway sending connect: role=\(configuration.role.rawValue) \
-            client.id=\(configuration.client.id) platform=\(configuration.client.platform) \
-            mode=\(configuration.client.mode.rawValue)
-            """
-        )
-
         let frame = JSONValue.object([
             "type": .string("req"),
             "id": .string(requestID),
@@ -435,21 +424,6 @@ public actor GatewayClient {
             ? explicitBootstrapToken
             : nil
 
-        let redact: (String?) -> String = { value in
-            guard let v = value, !v.isEmpty else { return "<nil>" }
-            return v.count > 8 ? "\(v.prefix(4))...\(v.suffix(4))" : "<short>"
-        }
-        print(
-            """
-            Alchemy Gateway selectConnectAuth: role=\(configuration.role.rawValue) \
-            explicitBootstrap=\(redact(explicitBootstrapToken)) \
-            explicitDevice=\(redact(explicitDeviceToken)) \
-            stored=\(redact(stored?.token)) storedRole=\(stored.map { _ in configuration.role.rawValue } ?? "<none>") \
-            resolved=\(redact(resolvedDeviceToken)) \
-            authToken=\(redact(authToken)) authBootstrap=\(redact(authBootstrapToken))
-            """
-        )
-
         return PendingAuthSelection(
             authToken: authToken,
             authBootstrapToken: authBootstrapToken,
@@ -461,14 +435,6 @@ public actor GatewayClient {
     }
 
     private func storeAuthTokens(from hello: GatewayHello) async throws {
-        print(
-            """
-            Alchemy Gateway storeAuthTokens: \
-            primaryToken=\(hello.primaryToken.map { "\($0.role.rawValue)" } ?? "<nil>") \
-            additionalTokens=\(hello.additionalTokens.map { "\($0.role.rawValue)" })
-            """
-        )
-
         if let primaryToken = hello.primaryToken {
             await authStore.storeToken(
                 deviceID: try deviceIdentity.deviceID,
@@ -479,7 +445,6 @@ public actor GatewayClient {
         }
 
         for token in hello.additionalTokens {
-            print("Alchemy Gateway storeAuthTokens: storing additional role=\(token.role.rawValue)")
             await authStore.storeToken(
                 deviceID: try deviceIdentity.deviceID,
                 role: token.role.rawValue,
