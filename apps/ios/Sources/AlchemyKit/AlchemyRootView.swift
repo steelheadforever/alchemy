@@ -2,42 +2,29 @@ import SwiftUI
 
 public struct AlchemyRootView: View {
     @State private var workspaceModel = ChatWorkspaceViewModel()
-    @State private var showSplash = true
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
     public var body: some View {
-        ZStack {
-            Group {
-                switch workspaceModel.connectionState {
-                case .unknown, .connecting:
-                    connectingView
-                case .connected:
-                    ChatWorkspaceView(model: workspaceModel)
-                case .disconnected:
-                    OnboardingView(
-                        onConnect: { setupCode in
-                            await workspaceModel.connect(using: setupCode)
-                        },
-                        connectionStatus: workspaceModel.errorMessage,
-                        connectionDiagnostics: workspaceModel.connectionDiagnostics
-                    )
-                }
-            }
-
-            if showSplash {
-                SplashScreenView()
-                    .transition(.opacity)
-                    .zIndex(1)
+        Group {
+            switch workspaceModel.connectionState {
+            case .unknown, .connecting:
+                connectingView
+            case .connected:
+                ChatWorkspaceView(model: workspaceModel)
+            case .disconnected:
+                OnboardingView(
+                    onConnect: { setupCode in
+                        await workspaceModel.connect(using: setupCode)
+                    },
+                    connectionStatus: workspaceModel.errorMessage,
+                    connectionDiagnostics: workspaceModel.connectionDiagnostics
+                )
             }
         }
         .preferredColorScheme(.dark)
         .task {
-            try? await Task.sleep(for: .seconds(1.5))
-            withAnimation(.easeOut(duration: 0.5)) {
-                showSplash = false
-            }
             await workspaceModel.reconnectIfPossible()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -57,15 +44,22 @@ public struct AlchemyRootView: View {
             AlchemyTheme.surfacePrimary
                 .ignoresSafeArea()
 
-            VStack(spacing: 16) {
-                Text("alchemy")
-                    .font(.system(size: 32, weight: .light, design: .default))
-                    .tracking(2)
+            VStack(spacing: 6) {
+                Text("\u{03B1}")
+                    .font(.system(size: 49, weight: .thin, design: .serif))
                     .foregroundStyle(AlchemyTheme.accent)
+                Text("alchemy")
+                    .font(.system(size: 16, weight: .medium))
+                    .tracking(4)
+                    .foregroundStyle(.secondary)
+            }
 
+            VStack {
+                Spacer()
                 ProgressView()
                     .tint(AlchemyTheme.accent)
                     .controlSize(.regular)
+                    .padding(.bottom, 80)
             }
         }
     }

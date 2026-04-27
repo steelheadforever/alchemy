@@ -6,10 +6,15 @@ struct SplashScreenView: View {
             AlchemyTheme.surfacePrimary
                 .ignoresSafeArea()
 
-            Text("alchemy")
-                .font(.system(size: 32, weight: .light, design: .default))
-                .tracking(2)
-                .foregroundStyle(AlchemyTheme.accent)
+            VStack(spacing: 6) {
+                Text("\u{03B1}")
+                    .font(.system(size: 49, weight: .thin, design: .serif))
+                    .foregroundStyle(AlchemyTheme.accent)
+                Text("alchemy")
+                    .font(.system(size: 16, weight: .medium))
+                    .tracking(4)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

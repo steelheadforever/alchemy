@@ -45,9 +45,10 @@ public struct ChatWorkspaceView: View {
                     channelRow(channel)
                 }
             } header: {
-                Text("Channels")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text("CHANNELS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.tertiary)
             }
 
             // User folders
@@ -91,55 +92,74 @@ public struct ChatWorkspaceView: View {
                             Task { await model.createChannel(for: agent) }
                         } label: {
                             HStack(spacing: 8) {
-                                Circle()
-                                    .fill(AlchemyTheme.accent.opacity(0.3))
-                                    .frame(width: 6, height: 6)
+                                Text("\u{03B1}")
+                                    .font(.system(size: 13, weight: .regular, design: .serif))
+                                    .foregroundStyle(AlchemyTheme.accent.opacity(0.5))
+                                    .frame(width: 14)
                                 Text(agent.title)
-                                    .font(.callout)
+                                    .font(.system(size: 14))
                             }
                         }
                     }
                 }
             } header: {
-                Text("Agents")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text("AGENTS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.tertiary)
             }
 
             // Connection status
             Section {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(connectionColor)
-                        .frame(width: 6, height: 6)
-                    Text(connectionLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(connectionColor)
+                            .frame(width: 5, height: 5)
+                        Text(connectionLabel)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.tertiary)
 
-                    if model.connectionState == .connecting {
-                        Spacer()
-                        ProgressView()
-                            .controlSize(.mini)
+                        if model.connectionState == .connecting {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
                     }
-                }
 
-                if let errorMessage = model.errorMessage {
-                    Text(errorMessage)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
+                    if let errorMessage = model.errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red.opacity(0.8))
+                    }
                 }
 
                 Button(role: .destructive) {
                     Task { await model.unpair() }
                 } label: {
                     Text("Disconnect")
-                        .font(.caption)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("alchemy")
+        .navigationTitle("")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 5) {
+                    Text("\u{03B1}")
+                        .font(.system(size: 19, weight: .regular, design: .serif))
+                    Text("alchemy")
+                        .font(.system(size: 16, weight: .medium))
+                        .tracking(1.5)
+                }
+                .foregroundStyle(AlchemyTheme.accent)
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {
@@ -168,6 +188,7 @@ public struct ChatWorkspaceView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.callout.weight(.medium))
+                        .foregroundStyle(AlchemyTheme.accent)
                 }
             }
         }
@@ -226,13 +247,17 @@ public struct ChatWorkspaceView: View {
 
     private func channelRow(_ channel: WorkspaceChannel) -> some View {
         HStack(spacing: 8) {
-            Circle()
+            RoundedRectangle(cornerRadius: 1)
                 .fill(color(for: channel.status))
-                .frame(width: 6, height: 6)
+                .frame(width: 3, height: 14)
 
             Text(model.displayName(for: channel))
-                .font(.callout)
+                .font(.system(size: 14))
                 .lineLimit(1)
+                .foregroundStyle(
+                    model.channelFolderMap[channel.sessionKey] == model.archiveFolder?.id
+                        ? .tertiary : .primary
+                )
         }
         .tag(channel.id)
         .contextMenu {
@@ -286,24 +311,26 @@ public struct ChatWorkspaceView: View {
         Button {
             model.toggleFolderCollapsed(folder.id)
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: folder.isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.quaternary)
+                    .frame(width: 10)
 
-                Image(systemName: folder.isArchive ? "archivebox" : "folder")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Image(systemName: folder.isArchive ? "archivebox" : "folder.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
 
-                Text(folder.name)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text(folder.name.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.tertiary)
 
                 let count = model.channels(in: folder).count
                 if count > 0 {
                     Text("\(count)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.quaternary)
                 }
             }
         }
@@ -345,13 +372,13 @@ public struct ChatWorkspaceView: View {
             ZStack {
                 AlchemyTheme.surfacePrimary
                     .ignoresSafeArea()
-                VStack(spacing: 8) {
-                    Text(">")
-                        .font(.title.monospaced().weight(.bold))
-                        .foregroundStyle(AlchemyTheme.accent.opacity(0.3))
+                VStack(spacing: 10) {
+                    Text("\u{03B1}")
+                        .font(.system(size: 57, weight: .thin, design: .serif))
+                        .foregroundStyle(AlchemyTheme.accent.opacity(0.15))
                     Text("Select or create a channel")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
@@ -524,33 +551,31 @@ private struct MessageView: View {
             HStack {
                 Spacer(minLength: 60)
                 Text(message.text)
-                    .font(.callout)
-                    .padding(.horizontal, 12)
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 11)
                     .padding(.vertical, 6)
                     .background(
                         AlchemyTheme.surfaceTertiary,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                     )
             }
 
         case .assistant:
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(">")
-                    .font(.callout.monospaced().weight(.bold))
-                    .foregroundStyle(AlchemyTheme.accent)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("\u{03B1}")
+                    .font(.system(size: 15, weight: .regular, design: .serif))
+                    .foregroundStyle(AlchemyTheme.accent.opacity(0.7))
 
                 TypewriterText(text: message.text, isStreaming: message.isStreaming)
-                    .font(.callout)
+                    .font(.system(size: 15))
 
                 Spacer(minLength: 0)
             }
 
         case .system:
-            HStack(spacing: 4) {
-                Text(message.text)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
+            Text(message.text)
+                .font(.system(size: 12))
+                .foregroundStyle(.quaternary)
         }
     }
 }
@@ -599,40 +624,37 @@ private struct ToolActivityView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(tool.isStreaming ? AlchemyTheme.accent : .green)
+            RoundedRectangle(cornerRadius: 1)
+                .fill(tool.isStreaming ? AlchemyTheme.accent.opacity(0.6) : .green.opacity(0.5))
                 .frame(width: 2)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(tool.title)
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
 
                     Spacer()
-
-                    Text(tool.status)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
 
                     if tool.isStreaming {
                         ProgressView()
                             .controlSize(.mini)
                     } else {
                         Image(systemName: "checkmark")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.green.opacity(0.7))
                     }
                 }
 
                 if let detail = tool.detail {
                     Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                         .lineLimit(2)
                 }
             }
             .padding(.leading, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 3)
             .padding(.trailing, 8)
         }
         .padding(.leading, AlchemyTheme.agentIndent)
@@ -646,34 +668,35 @@ private struct ApprovalContextView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(AlchemyTheme.accent)
+            RoundedRectangle(cornerRadius: 1)
+                .fill(AlchemyTheme.accent.opacity(0.6))
                 .frame(width: 2)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Label(
                     prompt.title,
                     systemImage: prompt.kind == .exec
                         ? "shield.lefthalf.filled"
                         : "puzzlepiece.extension"
                 )
-                .font(.caption.weight(.medium))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
 
                 if let detail = prompt.detail {
                     Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                         .lineLimit(3)
                 }
 
                 if prompt.resolvedChoiceID != nil {
                     Label("Resolved", systemImage: "checkmark.circle.fill")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.green)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green.opacity(0.7))
                 }
             }
             .padding(.leading, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 3)
         }
         .padding(.leading, AlchemyTheme.agentIndent)
     }
@@ -686,42 +709,43 @@ private struct ApprovalFooterBar: View {
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: prompt.kind == .exec
                 ? "shield.lefthalf.filled"
                 : "puzzlepiece.extension")
-                .foregroundStyle(AlchemyTheme.accent)
-                .font(.subheadline)
+                .foregroundStyle(AlchemyTheme.accent.opacity(0.8))
+                .font(.system(size: 14))
 
             Text(prompt.title)
-                .font(.subheadline)
+                .font(.system(size: 14))
                 .lineLimit(1)
+                .foregroundStyle(.secondary)
 
             Spacer()
 
             ForEach(prompt.approveChoices) { action in
                 Button { onAction(action) } label: {
                     Image(systemName: "checkmark")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green)
+                .tint(.green.opacity(0.8))
                 .controlSize(.small)
             }
 
             if let deny = prompt.denyChoice {
                 Button { onAction(deny) } label: {
                     Image(systemName: "xmark")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.bordered)
-                .tint(.red)
+                .tint(.red.opacity(0.8))
                 .controlSize(.small)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(AlchemyTheme.accent.opacity(0.08))
+        .padding(.vertical, 7)
+        .background(AlchemyTheme.surfaceSecondary)
     }
 }
 
@@ -732,23 +756,21 @@ private struct OptionPromptView: View {
     let onAction: @MainActor (ChannelButtonAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(prompt.title)
-                .font(.caption.weight(.medium))
-
+        VStack(alignment: .leading, spacing: 5) {
             if let detail = prompt.detail {
                 Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
             }
 
-            WrappingHStack(spacing: 6) {
+            WrappingHStack(spacing: 5) {
                 ForEach(prompt.options) { option in
                     Button(option.title) { onAction(option) }
-                        .font(.caption)
+                        .font(.system(size: 13))
                         .buttonStyle(.bordered)
                         .buttonBorderShape(.capsule)
                         .controlSize(.small)
+                        .tint(AlchemyTheme.accent)
                 }
             }
         }
@@ -771,27 +793,28 @@ private struct InputBar: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
             TextField(placeholder, text: $text, axis: .vertical)
+                .font(.system(size: 15))
                 .lineLimit(1...6)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title)
+                    .font(.title2)
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(canSend ? AlchemyTheme.accent : .secondary)
+                    .foregroundStyle(canSend ? AlchemyTheme.accent : Color.secondary.opacity(0.3))
             }
             .disabled(!canSend)
             .padding(.trailing, 8)
-            .padding(.bottom, 4)
+            .padding(.bottom, 5)
         }
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.regularMaterial)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(AlchemyTheme.surfaceSecondary)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
         )
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
