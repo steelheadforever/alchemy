@@ -48,13 +48,7 @@ enum GatewayWorkspaceParsing {
                 return nil
             }
 
-            let title =
-                item["groupChannel"]?.stringValue ??
-                item["label"]?.stringValue ??
-                item["displayName"]?.stringValue ??
-                item["title"]?.stringValue ??
-                item["name"]?.stringValue ??
-                "# \(sessionKey)"
+            let title = resolveChannelTitle(item: item, sessionKey: sessionKey)
 
             var timeline: [ChannelTimelineItem] = []
             if let lastMessage = parseLastMessage(item["lastMessage"] ?? item["lastMessagePreview"], sessionKey: sessionKey) {
@@ -530,7 +524,111 @@ enum GatewayWorkspaceParsing {
         )
     }
 
-    private static func normalizeChannelTitle(_ title: String) -> String {
+    // MARK: - Channel Title Resolution
+
+    private static func resolveChannelTitle(item: JSONValue, sessionKey: String) -> String {
+        // 1. groupChannel — best source (e.g. "#wm-local")
+        if let gc = item["groupChannel"]?.stringValue, !gc.isEmpty {
+            return normalizeChannelTitle(gc)
+        }
+
+        // 2. label — user/system label (e.g. "Cron: healthcheck:update-status")
+        if let label = item["label"]?.stringValue, !label.isEmpty {
+            return normalizeChannelTitle(label)
+        }
+
+        // 3. displayName — clean extractable channel name
+        if let dn = item["displayName"]?.stringValue, !dn.isEmpty {
+            return normalizeChannelTitle(cleanDisplayName(dn))
+        }
+
+        // 4. title / name — existing fallbacks
+        if let t = item["title"]?.stringValue, !t.isEmpty {
+            return normalizeChannelTitle(t)
+        }
+        if let n = item["name"]?.stringValue, !n.isEmpty {
+            return normalizeChannelTitle(n)
+        }
+
+        // 5. origin.label — extract #channel from e.g. "Guild #wm_research channel id:123"
+        if let originLabel = item["origin"]?["label"]?.stringValue,
+           let extracted = extractOriginChannelName(originLabel) {
+            return normalizeChannelTitle(extracted)
+        }
+
+        // 6. humanizeSessionKey — final fallback
+        return normalizeChannelTitle(humanizeSessionKey(sessionKey))
+    }
+
+    /// Extracts `#channel-name` from display names like `"discord:123#wm-local"`.
+    /// Falls back to the raw displayName if no extractable channel name is found.
+    static func cleanDisplayName(_ displayName: String) -> String {
+        // Look for the last `#` — if followed by a plausible channel slug, extract it
+        guard let hashIndex = displayName.lastIndex(of: "#") else {
+            return displayName
+        }
+
+        let afterHash = String(displayName[displayName.index(after: hashIndex)...])
+        // Channel names are typically alphanumeric with dashes/underscores, at least 2 chars
+        let channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{1,}$/
+        if afterHash.wholeMatch(of: channelPattern) != nil {
+            return "#\(afterHash)"
+        }
+
+        return displayName
+    }
+
+    /// Extracts `#channel` from origin label strings like `"Guild #wm_research channel id:123"`.
+    static func extractOriginChannelName(_ label: String) -> String? {
+        guard let hashRange = label.range(of: "#") else {
+            return nil
+        }
+
+        let afterHash = label[hashRange.upperBound...]
+        // Grab contiguous channel-name characters
+        let name = afterHash.prefix(while: { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+        guard name.count >= 2 else {
+            return nil
+        }
+
+        return "#\(name)"
+    }
+
+    /// Builds a readable name from colon-separated session key parts.
+    /// e.g. `"agent:main:discord:channel:1497269"` → `"discord channel ...7269"`
+    static func humanizeSessionKey(_ sessionKey: String) -> String {
+        let parts = sessionKey.split(separator: ":").map(String.init)
+        guard parts.count > 1 else {
+            return truncatedKey(sessionKey)
+        }
+
+        // Filter out generic noise words
+        let noise: Set<String> = ["agent", "main", "session", "key", "entry"]
+        let meaningful = parts.filter { !noise.contains($0.lowercased()) }
+
+        guard !meaningful.isEmpty else {
+            return truncatedKey(sessionKey)
+        }
+
+        // If the last part looks like a long numeric ID, truncate it
+        let formatted = meaningful.map { part in
+            if part.count > 8, part.allSatisfy(\.isNumber) {
+                return "...\(part.suffix(4))"
+            }
+            return part
+        }
+
+        return formatted.joined(separator: " ")
+    }
+
+    private static func truncatedKey(_ key: String) -> String {
+        if key.count > 20 {
+            return "\(key.prefix(8))...\(key.suffix(4))"
+        }
+        return key
+    }
+
+    static func normalizeChannelTitle(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return "# channel"

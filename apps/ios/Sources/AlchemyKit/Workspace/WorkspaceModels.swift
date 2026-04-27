@@ -199,6 +199,45 @@ public struct ChannelButtonAction: Identifiable, Equatable, Sendable {
     }
 }
 
+// MARK: - Folders
+
+public struct ChannelFolder: Identifiable, Equatable, Sendable, Codable {
+    public var id: String
+    public var name: String
+    public var isArchive: Bool
+    public var isCollapsed: Bool
+
+    public init(id: String, name: String, isArchive: Bool = false, isCollapsed: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isArchive = isArchive
+        self.isCollapsed = isCollapsed
+    }
+
+    public static let archive = ChannelFolder(
+        id: "archive",
+        name: "Archive",
+        isArchive: true,
+        isCollapsed: true
+    )
+}
+
+public struct FolderConfiguration: Codable, Equatable, Sendable {
+    public var folders: [ChannelFolder]
+    public var channelFolderMap: [String: String]
+    public var channelNameOverrides: [String: String]
+
+    public init(
+        folders: [ChannelFolder] = [.archive],
+        channelFolderMap: [String: String] = [:],
+        channelNameOverrides: [String: String] = [:]
+    ) {
+        self.folders = folders
+        self.channelFolderMap = channelFolderMap
+        self.channelNameOverrides = channelNameOverrides
+    }
+}
+
 public struct SessionStreamEnvelope: Equatable, Sendable {
     public var sessionKey: String
     public var item: ChannelTimelineItem

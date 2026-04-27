@@ -3,6 +3,14 @@ import SwiftUI
 public struct ChatWorkspaceView: View {
     @State private var model: ChatWorkspaceViewModel
 
+    // Folder dialog state
+    @State private var showNewFolderDialog = false
+    @State private var newFolderName = ""
+    @State private var renamingFolderID: String?
+    @State private var renamingFolderText = ""
+    @State private var renamingChannelKey: String?
+    @State private var renamingChannelText = ""
+
     public init(model: ChatWorkspaceViewModel = ChatWorkspaceViewModel()) {
         _model = State(initialValue: model)
     }
@@ -31,18 +39,10 @@ public struct ChatWorkspaceView: View {
                 model.selectChannel(channel)
             }
         )) {
+            // Ungrouped channels
             Section {
-                ForEach(model.channels) { channel in
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(color(for: channel.status))
-                            .frame(width: 6, height: 6)
-
-                        Text(channel.displayName)
-                            .font(.callout)
-                            .lineLimit(1)
-                    }
-                    .tag(channel.id)
+                ForEach(model.ungroupedChannels) { channel in
+                    channelRow(channel)
                 }
             } header: {
                 Text("Channels")
@@ -50,6 +50,33 @@ public struct ChatWorkspaceView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // User folders
+            ForEach(model.userFolders) { folder in
+                Section {
+                    if !folder.isCollapsed {
+                        ForEach(model.channels(in: folder)) { channel in
+                            channelRow(channel)
+                        }
+                    }
+                } header: {
+                    folderHeader(folder)
+                }
+            }
+
+            // Archive folder
+            if let archive = model.archiveFolder {
+                Section {
+                    if !archive.isCollapsed {
+                        ForEach(model.channels(in: archive)) { channel in
+                            channelRow(channel)
+                        }
+                    }
+                } header: {
+                    folderHeader(archive)
+                }
+            }
+
+            // Agents
             Section {
                 if model.isLoadingAgents {
                     HStack(spacing: 8) {
@@ -79,6 +106,7 @@ public struct ChatWorkspaceView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Connection status
             Section {
                 HStack(spacing: 6) {
                     Circle()
@@ -122,6 +150,13 @@ public struct ChatWorkspaceView: View {
                     .disabled(!model.isConnected || model.availableAgents.isEmpty)
 
                     Button {
+                        newFolderName = ""
+                        showNewFolderDialog = true
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+
+                    Button {
                         Task {
                             await model.refreshAgents()
                             await model.refreshChannels()
@@ -133,6 +168,159 @@ public struct ChatWorkspaceView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.callout.weight(.medium))
+                }
+            }
+        }
+        .alert("New Folder", isPresented: $showNewFolderDialog) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty {
+                    model.createFolder(name: name)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Rename Folder",
+               isPresented: Binding(
+                   get: { renamingFolderID != nil },
+                   set: { if !$0 { renamingFolderID = nil } }
+               )
+        ) {
+            TextField("Folder name", text: $renamingFolderText)
+            Button("Rename") {
+                if let folderID = renamingFolderID {
+                    let name = renamingFolderText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty {
+                        model.renameFolder(folderID, to: name)
+                    }
+                }
+                renamingFolderID = nil
+            }
+            Button("Cancel", role: .cancel) { renamingFolderID = nil }
+        }
+        .alert("Rename Channel",
+               isPresented: Binding(
+                   get: { renamingChannelKey != nil },
+                   set: { if !$0 { renamingChannelKey = nil } }
+               )
+        ) {
+            TextField("Channel name", text: $renamingChannelText)
+            Button("Rename") {
+                if let key = renamingChannelKey {
+                    model.renameChannel(key, to: renamingChannelText)
+                }
+                renamingChannelKey = nil
+            }
+            Button("Reset to Default", role: .destructive) {
+                if let key = renamingChannelKey {
+                    model.clearChannelRename(key)
+                }
+                renamingChannelKey = nil
+            }
+            Button("Cancel", role: .cancel) { renamingChannelKey = nil }
+        }
+    }
+
+    // MARK: - Channel Row
+
+    private func channelRow(_ channel: WorkspaceChannel) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color(for: channel.status))
+                .frame(width: 6, height: 6)
+
+            Text(model.displayName(for: channel))
+                .font(.callout)
+                .lineLimit(1)
+        }
+        .tag(channel.id)
+        .contextMenu {
+            Button {
+                renamingChannelText = model.displayName(for: channel)
+                renamingChannelKey = channel.sessionKey
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            if !model.userFolders.isEmpty {
+                Menu {
+                    ForEach(model.userFolders) { folder in
+                        Button(folder.name) {
+                            model.moveChannel(channel.sessionKey, toFolder: folder.id)
+                        }
+                    }
+                } label: {
+                    Label("Move to Folder", systemImage: "folder")
+                }
+            }
+
+            if model.channelFolderMap[channel.sessionKey] == model.archiveFolder?.id {
+                Button {
+                    model.unarchiveChannel(channel.sessionKey)
+                } label: {
+                    Label("Unarchive", systemImage: "tray.and.arrow.up")
+                }
+            } else {
+                Button {
+                    model.archiveChannel(channel.sessionKey)
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+            }
+
+            if let folderID = model.channelFolderMap[channel.sessionKey],
+               folderID != model.archiveFolder?.id {
+                Button {
+                    model.removeChannelFromFolder(channel.sessionKey)
+                } label: {
+                    Label("Remove from Folder", systemImage: "folder.badge.minus")
+                }
+            }
+        }
+    }
+
+    // MARK: - Folder Header
+
+    private func folderHeader(_ folder: ChannelFolder) -> some View {
+        Button {
+            model.toggleFolderCollapsed(folder.id)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: folder.isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Image(systemName: folder.isArchive ? "archivebox" : "folder")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Text(folder.name)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                let count = model.channels(in: folder).count
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if !folder.isArchive {
+                Button {
+                    renamingFolderText = folder.name
+                    renamingFolderID = folder.id
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+
+                Button(role: .destructive) {
+                    model.deleteFolder(folder.id)
+                } label: {
+                    Label("Delete Folder", systemImage: "trash")
                 }
             }
         }
@@ -149,7 +337,7 @@ public struct ChatWorkspaceView: View {
                 onSend: { Task { await model.sendDraft(in: channel) } },
                 onAction: { action in Task { await model.perform(action, in: channel) } }
             )
-            .navigationTitle(channel.displayName)
+            .navigationTitle(model.displayName(for: channel))
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif

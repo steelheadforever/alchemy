@@ -19,6 +19,11 @@ public final class ChatWorkspaceViewModel {
     public private(set) var isLoadingAgents = false
     public var errorMessage: String?
 
+    // Folder organization
+    public private(set) var folders: [ChannelFolder] = [.archive]
+    public private(set) var channelFolderMap: [String: String] = [:]
+    public private(set) var channelNameOverrides: [String: String] = [:]
+
     public var isConnected: Bool { connectionState == .connected }
 
     private let gateway: GatewayClient
@@ -30,6 +35,7 @@ public final class ChatWorkspaceViewModel {
 
     public init(gateway: GatewayClient = GatewayClient()) {
         self.gateway = gateway
+        loadFolderConfiguration()
     }
 
     private static let gatewayURLDefaultsKey = "ai.alchemy.gateway-url"
@@ -264,6 +270,146 @@ public final class ChatWorkspaceViewModel {
         connectionDiagnostics = []
         errorMessage = nil
         connectionState = .disconnected
+
+        folders = [.archive]
+        channelFolderMap = [:]
+        channelNameOverrides = [:]
+        saveFolderConfiguration()
+    }
+
+    // MARK: - Folder Organization
+
+    private static let folderConfigDefaultsKey = "ai.alchemy.folder-config"
+
+    private func loadFolderConfiguration() {
+        guard let data = UserDefaults.standard.data(forKey: Self.folderConfigDefaultsKey),
+              let config = try? JSONDecoder().decode(FolderConfiguration.self, from: data)
+        else {
+            return
+        }
+
+        folders = config.folders
+        channelFolderMap = config.channelFolderMap
+        channelNameOverrides = config.channelNameOverrides
+
+        // Ensure archive folder always exists
+        if !folders.contains(where: { $0.isArchive }) {
+            folders.append(.archive)
+        }
+    }
+
+    private func saveFolderConfiguration() {
+        let config = FolderConfiguration(
+            folders: folders,
+            channelFolderMap: channelFolderMap,
+            channelNameOverrides: channelNameOverrides
+        )
+        if let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: Self.folderConfigDefaultsKey)
+        }
+    }
+
+    public var userFolders: [ChannelFolder] {
+        folders.filter { !$0.isArchive }
+    }
+
+    public var archiveFolder: ChannelFolder? {
+        folders.first(where: { $0.isArchive })
+    }
+
+    public var ungroupedChannels: [WorkspaceChannel] {
+        channels.filter { channelFolderMap[$0.sessionKey] == nil }
+    }
+
+    public func channels(in folder: ChannelFolder) -> [WorkspaceChannel] {
+        channels.filter { channelFolderMap[$0.sessionKey] == folder.id }
+    }
+
+    public func createFolder(name: String) {
+        let folder = ChannelFolder(id: UUID().uuidString.lowercased(), name: name)
+        // Insert before archive
+        if let archiveIndex = folders.firstIndex(where: { $0.isArchive }) {
+            folders.insert(folder, at: archiveIndex)
+        } else {
+            folders.append(folder)
+        }
+        saveFolderConfiguration()
+    }
+
+    public func renameFolder(_ folderID: String, to name: String) {
+        guard let index = folders.firstIndex(where: { $0.id == folderID }),
+              !folders[index].isArchive else {
+            return
+        }
+        folders[index].name = name
+        saveFolderConfiguration()
+    }
+
+    public func deleteFolder(_ folderID: String) {
+        guard let index = folders.firstIndex(where: { $0.id == folderID }),
+              !folders[index].isArchive else {
+            return
+        }
+        // Move contained channels to ungrouped
+        for (key, fid) in channelFolderMap where fid == folderID {
+            channelFolderMap.removeValue(forKey: key)
+        }
+        folders.remove(at: index)
+        saveFolderConfiguration()
+    }
+
+    public func toggleFolderCollapsed(_ folderID: String) {
+        guard let index = folders.firstIndex(where: { $0.id == folderID }) else {
+            return
+        }
+        folders[index].isCollapsed.toggle()
+        saveFolderConfiguration()
+    }
+
+    public func moveChannel(_ sessionKey: String, toFolder folderID: String) {
+        channelFolderMap[sessionKey] = folderID
+        saveFolderConfiguration()
+    }
+
+    public func removeChannelFromFolder(_ sessionKey: String) {
+        channelFolderMap.removeValue(forKey: sessionKey)
+        saveFolderConfiguration()
+    }
+
+    public func archiveChannel(_ sessionKey: String) {
+        guard let archive = archiveFolder else { return }
+        channelFolderMap[sessionKey] = archive.id
+        // Auto-deselect if archived channel was selected
+        if selectedChannelID == sessionKey {
+            selectedChannelID = nil
+        }
+        saveFolderConfiguration()
+    }
+
+    public func unarchiveChannel(_ sessionKey: String) {
+        if channelFolderMap[sessionKey] == archiveFolder?.id {
+            channelFolderMap.removeValue(forKey: sessionKey)
+            saveFolderConfiguration()
+        }
+    }
+
+    public func renameChannel(_ sessionKey: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            channelNameOverrides.removeValue(forKey: sessionKey)
+        } else {
+            channelNameOverrides[sessionKey] = trimmed
+        }
+        saveFolderConfiguration()
+    }
+
+    public func clearChannelRename(_ sessionKey: String) {
+        channelNameOverrides.removeValue(forKey: sessionKey)
+        saveFolderConfiguration()
+    }
+
+    public func displayName(for channel: WorkspaceChannel) -> String {
+        channelNameOverrides[channel.sessionKey] ?? channel.displayName
     }
 
     private func attemptReconnectWithBackoff() async {
@@ -618,10 +764,13 @@ public final class ChatWorkspaceViewModel {
         if let existingIndex = channels.firstIndex(where: { $0.sessionKey == envelope.sessionKey }) {
             channelIndex = existingIndex
         } else {
+            let fallbackTitle = GatewayWorkspaceParsing.normalizeChannelTitle(
+                GatewayWorkspaceParsing.humanizeSessionKey(envelope.sessionKey)
+            )
             channels.append(
                 WorkspaceChannel(
                     sessionKey: envelope.sessionKey,
-                    title: "# \(envelope.sessionKey)",
+                    title: fallbackTitle,
                     status: .live
                 )
             )
